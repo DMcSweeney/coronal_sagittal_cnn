@@ -6,4 +6,4 @@ CNN attempts  = multi-class segmentation + regression with DSNT. <br>
 
 
 <h2> Workflow </h2>
-  
+  1. Inputs need to be nifty
