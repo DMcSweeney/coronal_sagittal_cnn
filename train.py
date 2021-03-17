@@ -25,9 +25,9 @@ from utils.customModel import customResnet
 import cv2
 
 torch.autograd.set_detect_anomaly(True)
-train_data = './msk_data/training_data.npz'
-valid_data = './msk_data/validation_data.npz'
-output_path = './tmp_outputs/'
+train_data = './data/training'
+valid_data = './data/validation'
+output_path = './outputs/'
 
 batch_size = 4
 input_channels = 1
