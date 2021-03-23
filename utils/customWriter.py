@@ -41,7 +41,7 @@ class customWriter(SummaryWriter):
     def reset_acc(self):
         self.train_acc, self.val_acc = [],  []
 
-    def plot_batch(self, tag, img, targets, masks, labels, plot_target=False):
+    def plot_batch(self, tag, img, masks, plot_target=False):
         """
         Plot batches in grid
 
@@ -54,17 +54,9 @@ class customWriter(SummaryWriter):
         for idx in np.arange(self.batch_size):
             ax = fig.add_subplot(self.batch_size // 2, self.batch_size // 2,
                                  idx+1, xticks=[], yticks=[], label='Inputs')
-            ax.imshow(img[idx, 0].cpu().numpy(), cmap='gray')
-            y_shape, x_shape = img[idx, 0].shape[0]/2, img[idx, 0].shape[1]/2
+            ax.imshow(img[idx, 0].cpu().numpy())
             if plot_target:
                 ax.imshow(masks[idx].cpu().numpy(), alpha=0.5)
-                # for i, label in enumerate(labels):
-                #     coords = targets[idx, i].cpu().numpy()
-                #     out_x, out_y = coords[1]+1, coords[0]+1
-                #     plt_coords = [out_x*x_shape, out_y*y_shape]
-                #     ax.scatter(plt_coords[0], plt_coords[1])
-                #     ax.text(plt_coords[0]+5, plt_coords[1], label[idx],
-                #             color='white', fontsize=15)
             ax.set_title(
                 'Input @ epoch: {} - idx: {}'.format(self.epoch, idx))
         self.add_figure(tag, fig)

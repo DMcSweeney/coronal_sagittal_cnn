@@ -7,31 +7,29 @@ import torch.nn as nn
 import torchvision.models as models
 import dsntnn
 import random
-import customDSNT as cstmDSNT
 random.seed(60)
 
 class customResnet(nn.Module):
-    def __init__(self, n_outputs):
+    def __init__(self, n_outputs, input_size):
         """
         seg_outputs = outputs for segmentation map  (should be total verts + 1 - for background)
         class_outputs = outputs for classifier (should be total verts)
         """
-
+        self.input_size = input_size
         super(customResnet, self).__init__()
         # Model
         # Control std of heatmaps used for calculating JS divergence
-        #self.sigma = nn.Parameter(torch.tensor([random.uniform(1, 10) for n in range(n_outputs)]), requires_grad=True)
-        self.sigma = nn.Parameter(torch.tensor([random.uniform(1, 10)]), requires_grad=True)
-        self.model = self.prep_model(1)
-        self.hm_conv = nn.Conv2d(4, n_outputs, kernel_size=1, bias=False)
+        #self.sigma = nn.Parameter(torch.tensor([random.uniform(1, 10)]), requires_grad=True)
+        self.model = self.prep_model(n_outputs)
+        self.hm_conv = nn.Conv2d(13, n_outputs, kernel_size=(1, self.input_size[1]), bias=False)
 
     def prep_model(self, num_outputs):
         """
         Load pre-trained weights
         """
 
-        pt_model = models.segmentation.fcn_resnet101(pretrained=True)
-        model = models.segmentation.fcn_resnet101(
+        pt_model = models.segmentation.fcn_resnet50(pretrained=False)
+        model = models.segmentation.fcn_resnet50(
             pretrained=False, num_classes=num_outputs)
 
         pt_dict = pt_model.state_dict()
@@ -54,15 +52,11 @@ class customResnet(nn.Module):
         return model
 
 
-    def forward(self, x):
-        seg_out = self.model(x)
-        norm_seg_out = seg_out['out']#torch.nn.functional.softmax(seg_out['out'], dim=1)
-        heatmap_in = torch.cat([x, norm_seg_out], dim=1)
+    def forward(self, sag_x, cor_x):
+        sag_out = self.model(sag_x)
+        cor_out = self.model(cor_x)
+        seg_out = (sag_out['out'] + cor_out['out'])/2
         # 2. Use a 1x1 conv to get one unnormalized heatmap per location
-        unnormalized_heatmaps = self.hm_conv(heatmap_in)
         # 3. Normalize the heatmaps
-        heatmaps = dsntnn.flat_softmax(unnormalized_heatmaps)
-        #heatmaps = cstmDSNT.sharpen_heatmaps(heatmaps, alpha=10)
-        # 4. Calculate the coordinates
-        coords = dsntnn.dsnt(heatmaps)
-        return coords, heatmaps, unnormalized_heatmaps, seg_out['out']
+        heatmap = self.hm_conv(seg_out)
+        return heatmap, seg_out

@@ -16,7 +16,10 @@ shuffle = True
 seed = 66
 
 root_dir= 'data'
-data_path = f'./{root_dir}/heatmaps/'
+heatmap_path = f'./{root_dir}/heatmaps/'
+mask_path = f'./{root_dir}/masks/'
+coord_path = f'./{root_dir}/coordinates/'
+
 cor_slices_path = './images_coronal/all_projections/'
 sag_slices_path = './images_sagittal/all_projections/'
 
@@ -34,18 +37,55 @@ test_val_split = 0.5
 
 def copy_files(names, out_path):
     print(f'Writing {len(names)} files to {out_path}')
+    # Make directories
+    os.makedirs(os.path.dirname(
+        f'{out_path}slices/coronal/'), exist_ok=True)
+    os.makedirs(os.path.dirname(
+        f'{out_path}slices/sagittal/'), exist_ok=True)
+    os.makedirs(os.path.dirname(
+        f'{out_path}targets/heatmaps/'), exist_ok=True)
+    os.makedirs(os.path.dirname(
+        f'{out_path}targets/masks/'), exist_ok=True)
+    os.makedirs(os.path.dirname(
+        f'{out_path}targets/coordinates/'), exist_ok=True)
+
     for name in names:
         filename = name + '.npy'
-        if filename in os.listdir(f'{out_path}slices/coronal/'): continue
-        shutil.copyfile(cor_slices_path + filename, f'{out_path}slices/coronal/{filename}')
-        shutil.copyfile(sag_slices_path + filename,
+        csv_filename = name + '.csv'
+        # Check if in coronal
+        if filename in os.listdir(f'{out_path}slices/coronal/'): 
+            pass
+        else:
+            shutil.copyfile(cor_slices_path + filename, f'{out_path}slices/coronal/{filename}')
+        # Check if sagittal
+        if filename in os.listdir(f'{out_path}slices/sagittal/'):
+            pass
+        else:
+            shutil.copyfile(sag_slices_path + filename,
                         f'{out_path}slices/sagittal/{filename}')
-        shutil.copyfile(data_path + filename,
-                        f'{out_path}targets/{filename}')
+        # Check heatmap
+        if filename in os.listdir(f'{out_path}targets/heatmaps/'):
+            pass
+        else:
+            shutil.copyfile(heatmap_path + filename,
+                        f'{out_path}targets/heatmaps/{filename}')
+        # Check masks
+        if filename in os.listdir(f'{out_path}targets/masks/'):
+            pass
+        else:
+            shutil.copyfile(mask_path + filename,
+                            f'{out_path}targets/masks/{filename}')
+        # Check coordinates
+        if filename in os.listdir(f'{out_path}targets/coordinates/'):
+            pass
+        else:
+            shutil.copyfile(coord_path + csv_filename,
+                            f'{out_path}targets/coordinates/{csv_filename}')
+
 
 
 def main():
-    ids = np.array([file.strip('.npy') for file in os.listdir(data_path)])
+    ids = np.array([file.strip('.npy') for file in os.listdir(heatmap_path)])
     print('Shuffling...., seed:', seed)
 
     np.random.seed(seed=seed)

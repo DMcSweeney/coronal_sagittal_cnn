@@ -15,18 +15,16 @@ from torch.optim import Adam
 import torch.nn as nn
 
 import albumentations as A
-from albumentations import Compose, HorizontalFlip, Rotate, ElasticTransform, \
-                            RandomScale, Resize, Normalize, RandomCrop
-from albumentations.pytorch import ToTensor
+from albumentations.pytorch.transforms import ToTensor
 
-from utils.customDataset import threeChannelDataset
-from utils.customWriter import customWriter
+from utils.customDataset_v2 import spineDataset
+from utils.customWriter_v2 import customWriter
 from utils.customModel import customResnet
 import cv2
 
 torch.autograd.set_detect_anomaly(True)
-train_data = './data/training'
-valid_data = './data/validation'
+train_path = './data/training/'
+valid_path = './data/validation/'
 output_path = './outputs/'
 
 batch_size = 4
@@ -42,7 +40,7 @@ device = torch.device("cuda:0")
 torch.cuda.set_device(device)
 
 def train(train_generator, valid_generator):
-    model = customResnet(n_outputs=num_outputs)
+    model = customResnet(n_outputs=num_outputs, input_size=(626, 452))
     model.to(device)
 
     optimizer = Adam(model.parameters(), lr=learning_rate)
@@ -51,8 +49,8 @@ def train(train_generator, valid_generator):
     
     # Applies LogSoftmax internally
     criterion = nn.MSELoss().cuda()
-    ce_criterion = nn.CrossEntropyLoss(weight=torch.Tensor([1, 57.9, 55.3, 55.4, 56.1, 48.8, 38.8,
-                                                         29.4, 24.2, 24.9, 27.4, 28.9, 29.4, 30.3])).cuda()
+    #ce_criterion = nn.CrossEntropyLoss(weight=torch.Tensor([1, 57.9, 55.3, 55.4, 56.1, 48.8, 38.8,
+    #                                                     29.4, 24.2, 24.9, 27.4, 28.9, 29.4, 30.3])).cuda()
 
 
     writer = customWriter(log_dir=output_path,
@@ -68,77 +66,55 @@ def train(train_generator, valid_generator):
         model.train()
         writer.reset_losses()
         for idx, data in enumerate(tqdm(train_generator)):
-            inputs = data['inputs'].to(device, dtype=torch.float32)
-            # Augmentation adds channel axis
-            targets = data['targets'].to(device, dtype=torch.float32)
+            sag_img, cor_img = data['sag_image'].to(
+                device, dtype=torch.float32), data['cor_image'].to(device, dtype=torch.float32)
+            heatmaps = data['heatmap'].to(device, dtype=torch.float32)
+            heatmaps = torch.squeeze(heatmaps.permute(0, 1, 3, 2))
+            keypoints, labels = data['keypoints'], data['class_labels']           
+            one_hot = data['one-hot'] # Vector encoding presence of a vert in the image
+
+            print(keypoints, labels)
             # Remove single channel 
-            masks = torch.squeeze(data['masks'].to(device, dtype=torch.long))
-            labels = data['class_labels']
             if epoch % 25==0 and idx==0:
-                writer.plot_batch(f'Inputs at epoch {epoch}', inputs, targets, masks, labels, plot_target=True)
+                writer.plot_inputs(f'Sagittal Inputs at epoch {epoch}', sag_img, targets=[keypoints, labels])
+                writer.plot_inputs(
+                    f'Coronal Inputs at epoch {epoch}', cor_img)
+                writer.plot_histogram(f'Target heatmap at epoch {epoch}', heatmaps, labels)
 
             optimizer.zero_grad()
-
            
-            coords, heatmaps, unnorm_heatmaps, seg_pred = model(inputs)
-            ce_loss = ce_criterion(seg_pred, masks)
-            # Per-location euclidean losses
-            euc_losses = dsntnn.euclidean_losses(coords, targets)
-            # Per-location regularization losses
-            reg_losses = dsntnn.js_reg_losses(heatmaps, targets, sigma_t=model.sigma)
-            # Combine losses into an overall loss
-            
-            loss = dsntnn.average_loss(
-                alpha*euc_losses+alpha*reg_losses )#, mask=data['present'].to(device, dtype=torch.float32))
-            # Penalise large peak widths
-            #loss += beta*torch.norm(model.sigma)**2
-            
-            loss += ce_loss
+            pred_heatmaps, seg_pred = model(sag_img, cor_img)
+            pred= torch.squeeze(pred_heatmaps)
+            mse_loss = criterion(pred, heatmaps)
+            loss = mse_loss
             
             writer.train_loss.append(loss.item())
             loss.backward()
             optimizer.step()
-            
-        
-        #writer.add_histogram('Sigma', model.sigma, epoch)
-        
+            break
+        break
+                 
         print('Train Loss:', np.mean(writer.train_loss))
         writer.add_scalar('training_loss', np.mean(writer.train_loss), epoch)
-        
-
         loss_list = []
-        
         with torch.set_grad_enabled(False):
             print('VALIDATION')
             for batch_idx, data in enumerate(valid_generator):
-                inputs = data['inputs'].to(device, dtype=torch.float32)
-                targets = data['targets'].to(device, dtype=torch.float32)
-                labels = data['class_labels']
-                masks = torch.squeeze(
-                    data['masks'].to(device, dtype=torch.long))
-
+                sag_img, cor_img = data['sag_image'].to(
+                    device, dtype=torch.float32), data['cor_image'].to(device, dtype=torch.float32)
+                heatmaps = data['heatmap'].to(device, dtype=torch.float32)
+                heatmaps = torch.squeeze(heatmaps.permute(0, 1, 3, 2))
+                labels = data['labels']
+                # Remove single channel
                 optimizer.zero_grad()
-
-                coords, heatmaps, unnorm_heatmaps, seg_pred = model(inputs)
-                if epoch % 25 == 0 and batch_idx == 0:
-                    writer.plot_prediction(
-                        f'Prediction at epoch {epoch}', inputs, coords, targets, plot_target=True)
-
-                    writer.plot_segmentation(f'Segmentation at epoch {epoch}', inputs, seg_pred, masks, plot_target=False)
-                    writer.plot_heatmap(f'Heatmaps at epoch {epoch}', inputs, heatmaps)
-                    writer.plot_heatmap(
-                        f'Unnormalized Heatmaps at epoch {epoch}', inputs, unnorm_heatmaps)
                 
-                ce_loss = ce_criterion(seg_pred, masks)
-                # Per-location euclidean losses
-                euc_losses = dsntnn.euclidean_losses(coords, targets)
-                # Per-location regularization losses
-                reg_losses = dsntnn.js_reg_losses(heatmaps, targets, sigma_t=model.sigma)
-                # Combine losses into an overall loss
-                valid_loss = dsntnn.average_loss(
-                    alpha*euc_losses+alpha*reg_losses)#, mask=data['present'].to(device, dtype=torch.float32))
-                #valid_loss += beta*torch.norm(model.sigma)**2
-                valid_loss += ce_loss
+                pred_heatmaps, seg_pred = model(sag_img, cor_img)
+                pred = torch.squeeze(pred_heatmaps)
+                mse_loss = criterion(pred, heatmaps)
+                if epoch % 25 == 0 and batch_idx == 0:
+                    writer.plot_histogram(f'Prediction at epoch {epoch}', heatmaps, labels=labels, prediction=pred_heatmaps)
+                
+                valid_loss = mse_loss
 
                 loss_list.append(valid_loss.item())
                 writer.val_loss.append(valid_loss.item())
@@ -168,27 +144,27 @@ def train(train_generator, valid_generator):
     return model
 
 if __name__ =='__main__':
-    train_transforms = Compose([
-        HorizontalFlip(p=0.5),
-        Rotate(p=0.5, limit=5, border_mode=cv2.BORDER_CONSTANT, value=0),
+    train_transforms = A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.Rotate(p=0.5, limit=5, border_mode=cv2.BORDER_CONSTANT, value=0),
         # ElasticTransform(p=0.5, approximate=True, alpha=75, sigma=8,
         #                  alpha_affine=50, border_mode=cv2.BORDER_CONSTANT, value=0),
         # RandomScale(),
         # Resize(512, 212),
-        RandomCrop(height=470, width=452, p=0.5),
-        Resize(626, 452),
-        Normalize(mean=(0.485, 0.456, 0.406), std=(
-            0.229, 0.224, 0.225), max_pixel_value=1),
+        A.RandomCrop(height=470, width=452, p=0.5),
+        A.Resize(626, 452),
+        # A.Normalize(mean=(0.485, 0.456, 0.406), std=(
+        #     0.229, 0.224, 0.225), max_pixel_value=1),
         ToTensor()
-    ], keypoint_params=A.KeypointParams(format='yx', remove_invisible=True, label_fields=['class_labels']))
+    ], keypoint_params=A.KeypointParams(format=('yx'), label_fields=['class_labels']), additional_targets={'image1': 'image', 'image2': 'image'})
 
-    valid_transforms = Compose([Normalize(mean=(0.485, 0.456, 0.406), std=(
-        0.229, 0.224, 0.225), max_pixel_value=1), 
-        ToTensor()], keypoint_params=A.KeypointParams(format='yx', remove_invisible=True, label_fields=['class_labels']))
+    valid_transforms = A.Compose([
+        # A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=1), 
+        ToTensor()], keypoint_params=A.KeypointParams(format=('yx'), label_fields=['class_labels']), additional_targets={'image1': 'image', 'image2': 'image'})
 
-    train_dataset = threeChannelDataset(train_data, transforms=train_transforms, normalise=False)
-    valid_dataset = threeChannelDataset(valid_data, transforms=valid_transforms, normalise=False)
-
+    train_dataset = spineDataset(train_path, transforms=train_transforms, normalise=True)
+    valid_dataset = spineDataset(valid_path, transforms=valid_transforms, normalise=True)
+   
     # train_dataset.write_categories('overview.txt')
     # valid_dataset.write_categories('overview_valid.txt')
 
