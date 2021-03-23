@@ -6,7 +6,6 @@ CNN attempts  = multi-class segmentation + regression with DSNT. <br>
 
 
 <h2> Workflow </h2>
-  1. Inputs need to be nifty
 
 `python projections.py` should make MIP, STD and AVG projections - need to change outputs + lines 177-179 depending on coronal or sagittal. <br>
 
