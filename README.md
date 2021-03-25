@@ -11,6 +11,6 @@ CNN attempts  = multi-class segmentation + regression with DSNT. <br>
 
 `prepapre_data.ipynb` - notebook for preparing annotations + images for training. (__Will need to be changed__) <br>
 
-`python trainTestValSplit.py`- self-explanatory <br>
+`python trainTestValSplit.py`- organise files for training<br>
 
 `python train.py` - doesn't work yet and will need to be rewritten for predicting a single level
