@@ -15,20 +15,29 @@ import seaborn as sns
 
 
 class customWriter(SummaryWriter):
-    def __init__(self, log_dir, batch_size, epoch, num_classes):
-        super(customWriter, self).__init__()
-        self.log_dir = log_dir
+    def __init__(self, log_dir, batch_size, num_classes, epoch=0):
+        super().__init__()
         self.batch_size = batch_size
         self.epoch = epoch
-        self.num_classes = num_classes
         self.train_loss = []
         self.val_loss = []
-        self.train_acc = []
-        self.val_acc = []
         self.ordered_verts = ['T4', 'T5', 'T6', 'T7', 'T8', 'T9',
                               'T10', 'T11', 'T12', 'L1', 'L2', 'L3', 'L4']
         self.hist_colours = ['r', 'b', 'g', 'c', 'm', 'y', 'orange', 'brown', 'pink', 'purple', 'k', 'gray', 'olive']
 
+    @staticmethod
+    def sigmoid(x):
+        return 1/(1+torch.exp(-x))
+
+    @staticmethod
+    def norm_img(img):
+        return (img-img.min())/(img.max()-img.min())
+
+    def reset_losses(self):
+        self.train_loss, self.val_loss = [], []
+
+    def reset_acc(self):
+        self.train_acc, self.val_acc = [],  []
 
     def plot_inputs(self, title, img, targets=None):
         fig = plt.figure(figsize=(10, 10))
@@ -37,14 +46,15 @@ class customWriter(SummaryWriter):
             ax = fig.add_subplot(self.batch_size // 2, self.batch_size // 2,
                                  idx+1, label='Inputs')
             plt_img = np.moveaxis(img[idx].cpu().numpy(), 0, -1)
+            plt_img = self.norm_img(plt_img)
             ax.imshow(plt_img)
             if targets is not None:
-                for coords, vert in targets[idx]:
-                    print(coords, vert)
-                    y, x = coords
-                    
-                    ax.scatter(y, x)
-                    ax.text(y, x, vert)
+                coords, verts = targets
+                for i in range(len(self.ordered_verts)):
+                    if verts[idx, i] == 1:
+                        y = coords[idx, i]
+                        ax.axhline(y, c='y')
+                        ax.text(0, y-5, self.ordered_verts[i], color='white')
             ax.set_title(
                 'Input @ epoch: {} - idx: {}'.format(self.epoch, idx))
         self.add_figure(title, fig)
@@ -67,19 +77,38 @@ class customWriter(SummaryWriter):
                 data = histogram[idx, channel]
                 ax.plot(x, data, label=vert, color=self.hist_colours[channel])
             ax.set_title(
-                'Input @ epoch: {} - idx: {}'.format(self.epoch, idx))
+                'Histogram @ epoch: {} - idx: {}'.format(self.epoch, idx))
             ax.legend(loc='upper right')
         self.add_figure(title, fig)
 
-    @staticmethod
-    def sigmoid(x):
-        return 1/(1+torch.exp(-x))
+    def plot_prediction(self, title, img, prediction, targets=None, predicted=None):
+        fig = plt.figure(figsize=(10, 10))
+        plt.tight_layout()
+        prediction = prediction.cpu().numpy()
+        for idx in np.arange(self.batch_size):
+            ax = fig.add_subplot(self.batch_size // 2, self.batch_size // 2,
+                                 idx+1, label='Inputs')
+            plt_img = np.moveaxis(img[idx].cpu().numpy(), 0, -1)
+            plt_img = self.norm_img(plt_img)
+            ax.imshow(plt_img)
+            for i, coord in enumerate(prediction[idx]):
+                if targets is not None:
+                    _, verts = targets
+                    if verts[idx, i] == 1:
+                        ax.axhline(coord, c='w', linestyle='--')
+                        ax.text(256, coord-5, self.ordered_verts[i], color='r')
 
-    def reset_losses(self):
-        self.train_loss, self.val_loss, self.class_loss = [], [], {
-            n: [] for n in range(self.num_classes+1)}
+            if targets is not None:
+                coords, verts = targets
+                for i in range(len(self.ordered_verts)):
+                    if verts[idx, i] == 1:
+                        y = coords[idx, i]
+                        ax.axhline(y, c='y')
+                        ax.text(0, y-5, self.ordered_verts[i], color='white')
+            ax.set_title(
+                'Prediction @ epoch: {} - idx: {}'.format(self.epoch, idx))
+        self.add_figure(title, fig)
 
-    def reset_acc(self):
-        self.train_acc, self.val_acc = [],  []
+
 
 

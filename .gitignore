@@ -6,3 +6,5 @@ utils/__pycache__
 outputs/
 Improvement_epoch.txt
 .vscode/
+runs/
+logs/
