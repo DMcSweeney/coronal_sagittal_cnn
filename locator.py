@@ -64,6 +64,7 @@ def main():
     #!! TRAINING + VALIDATION
     model = tl.Locator(train_generator, valid_generator, dir_name='exp1', num_epochs=200)
     model.forward()
+    #//model.validation(epoch=0)
     torch.cuda.empty_cache()
     
 

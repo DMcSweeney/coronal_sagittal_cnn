@@ -132,6 +132,7 @@ class Locator():
                     #* Write predictions to tensorboard
                     if epoch % writer_interval == 0 and idx==0:
                         self.writer.plot_prediction(f'Prediction at epoch {epoch}', img=sag_img, prediction=pred_coords, targets=[keypoints, labels])
+                        self.writer.plot_histogram(f'Predicted Heatmap at epoch {epoch}', pred_heatmap[..., 0], labels=labels)
             print('Validation Loss:', np.mean(self.writer.val_loss))
             self.scheduler.step(np.mean(self.writer.val_loss))
             self.writer.add_scalar('Validation Loss', np.mean(self.writer.val_loss), epoch)
