@@ -10,7 +10,8 @@ from sklearn.preprocessing import OneHotEncoder
 from collections import Counter
 import SimpleITK as sitk
 import albumentations as A
-
+from scipy.special import softmax
+import dsntnn
 
 class spineDataset(Dataset):
     def __init__(self, dir_path, pre_processing_fn=None, transforms=None, normalise=True):
@@ -84,15 +85,16 @@ class spineDataset(Dataset):
         labels = np.array(labels).astype(int)
         return keypoints, labels
 
-    @staticmethod
-    def keypoints2tensor(keypoints):
+    def keypoints2tensor(self, keypoints, size):
         #*Convert into tensor (BxCx1)
         tgt_list = []
         for elem in keypoints:
             y,x = elem
             coord = torch.tensor(y)
             tgt_list.append(coord)
-        return torch.stack(tgt_list, dim=0)
+        tensor = torch.stack(tgt_list, dim=0)
+        #* Normalise between [-1, 1]
+        return dsntnn.pixel_to_normalized_coordinates(tensor, size=size)
 
     @staticmethod
     def to_tensor(x, **kwargs):
@@ -129,8 +131,8 @@ class spineDataset(Dataset):
         else:
             sag_img = self.sagittal_inputs['slices'][index]
             cor_img = self.coronal_inputs['slices'][index]
+        #* Apply softmax across each channel of heatmap
         heatmap = self.heatmaps['slices'][index]
-
         #// mask = np.argmax(self.masks['slices'][index], axis=-1)
         keypoints, labels = self.convert2keypoints(pid)
         if self.transforms:
@@ -144,14 +146,14 @@ class spineDataset(Dataset):
                 cor_prep = self.pre_processing_fn(image=cor_img)
                 sag_img, heatmap, cor_img = sag_prep['image'], sag_prep['mask'], cor_prep['image']
             #* Convert keypoints to tensor
-            out_keypoints = self.keypoints2tensor(keypoints)
+            out_keypoints = self.keypoints2tensor(keypoints, size=sag_img.shape[1])
             #* Convert list of labels to tensor
             out_labels = torch.stack([torch.tensor(elem) for elem in labels], dim=0)
-
+            out_heatmap = np.mean(heatmap, axis=2)
             #~Prepare sample
             sample = {'sag_image': sag_img, 
             'cor_image': cor_img,
-            'heatmap': np.mean(heatmap, axis=2),
+            'heatmap': out_heatmap,
             'keypoints': out_keypoints,
             'class_labels': out_labels,
             'id': pid}

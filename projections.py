@@ -97,9 +97,13 @@ def post_projection(img, new_spacing, output_shape=(626, 452)):
     """
     Post-processing for projections, resample to isotropic grid and make standardised shape
     """
-    resampled_img, scale = resample(img, new_spacing)
-    padded_img, padding = pad_image(resampled_img, output_shape)
-    return padded_img, scale, padding
+    print(img.GetSize(), output_shape)
+    if img.GetSize() != output_shape:
+        resampled_img, scale = resample(img, new_spacing)
+        padded_img, padding = pad_image(resampled_img, output_shape)
+        return padded_img, scale, padding
+    else:
+        return img, (1, 1), (0, 0)
 
 def plot_projection(img, name, path):
     
@@ -117,7 +121,7 @@ def write_threeChannel(images, name, path, output_shape=(626, 452)):
     Write projections to three channel npy file
     NOTE: images = tuple containing all three projections
     """
-    holder = np.zeros((*output_shape, 3))
+    holder = np.zeros((*output_shape[::-1], 3))
     for i, img in enumerate(images):
         arr = sitk.GetArrayFromImage(img).astype(np.float)
         arr /= 255 # Normalise to [0, 1]
@@ -126,7 +130,7 @@ def write_threeChannel(images, name, path, output_shape=(626, 452)):
 
 
 #-------- MAIN -------------
-def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(452, 626)):
+def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512)):
     # Create lists for values that will be needed later for overlaying annotations
     scale_list = [] # List containing values by which each dimension was scaled when iso. resampling
     padding_list = [] # Values for x and y padding when centering image in output array
@@ -152,7 +156,6 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(452, 626)):
                     min_pix = min(img.GetSpacing())
                 # Paul's data needs rotating
                 data_block = sitk.GetArrayViewFromImage(volume)
-                print(data_block.shape)
                 data_block = np.rot90(np.flip(data_block, axis=0), k=3, axes=(0, 1))
                 img = sitk.GetImageFromArray(data_block)
                 # SITK reorders dimensions so need to account for this when defining spacing
@@ -172,7 +175,6 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(452, 626)):
                 avg = normalize(avg)
                 std = standard_deviation(tissue_norm_img, dim=dim)
                 std = normalize(std)
-                print(mip.GetSize())
                 # Resample projections to isotropic voxel size
                 padded_mip, scale, padding = post_projection(mip[0], new_spacing, output_shape)
                 padded_avg, _,  _ = post_projection(avg[0], new_spacing, output_shape)
@@ -190,7 +192,7 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(452, 626)):
                 if write:
                     print('Writing projections to npy')
                     images = (padded_mip, padded_avg, padded_std)
-                    write_threeChannel(images, name, output_dir + 'all_projections/')
+                    write_threeChannel(images, name, output_dir + 'all_projections/', output_shape)
         
             except RuntimeError:
                 continue

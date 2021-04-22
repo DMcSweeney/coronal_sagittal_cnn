@@ -28,19 +28,19 @@ ENCODER_WEIGHTS = 'imagenet'
 
 def main():
     #~Pre-processing + training 
-
     # ** Create albumentation transforms - train + val
     train_transforms = A.Compose([A.HorizontalFlip(p=0.5),
             A.ShiftScaleRotate(scale_limit=0.2, rotate_limit=15,
                                 shift_limit=0.1, p=1, border_mode=0),
-            A.GaussNoise(var_limit=0.1, p=0.5, per_channel=False),
+            #A.GaussNoise(var_limit=0.05, p=0.5, per_channel=False),
             A.Perspective(p=0.5),
-            A.Resize(height=512, width=256)
+            #'A.RandomCrop(height=, width=512, p=0.5)
+            A.Resize(height=512, width=512)
             ], 
         keypoint_params=A.KeypointParams(format=('yx'), label_fields=['class_labels'], remove_invisible=False), 
         additional_targets={'image1': 'image'})
 
-    valid_transforms = A.Compose([A.Resize(height=512, width=256)],
+    valid_transforms = A.Compose([A.Resize(height=512, width=512)],
         keypoint_params=A.KeypointParams(format='yx', remove_invisible=True, label_fields=['class_labels']),
         additional_targets={'image1': 'image'})
 
@@ -64,7 +64,7 @@ def main():
     #!! TRAINING + VALIDATION
     model = tl.Locator(train_generator, valid_generator, dir_name='exp1', num_epochs=200)
     model.forward()
-    #//model.validation(epoch=0)
+    #model.validation(epoch=0)
     torch.cuda.empty_cache()
     
 

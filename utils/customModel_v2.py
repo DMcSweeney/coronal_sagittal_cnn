@@ -57,7 +57,7 @@ class customUNet(nn.Module):
         #* Convert to 1D heatmap
         unnorm_heatmap = self.hm_conv(seg_out)
         heatmap = dsntnn.flat_softmax(unnorm_heatmap)
-        coords = dsntnn.dsnt(heatmap, normalized_coordinates=False)
+        coords = dsntnn.dsnt(heatmap, normalized_coordinates=True)
         return seg_out, heatmap, coords[..., 1]
 
     

@@ -24,7 +24,7 @@ from torch.autograd import Variable
 
 import utils.customModel_v2 as cm2
 import utils.customWriter_v2 as cw2
-
+import utils.customLosses as cl
 
 class Locator():
     """
@@ -75,23 +75,25 @@ class Locator():
             #*Load data
             sag_img = data['sag_image'].to(self.device, dtype=torch.float32)
             cor_img = data['cor_image'].to(self.device, dtype=torch.float32)
-            heatmaps = data['heatmap'].to(self.device, dtype=torch.float32)
+            heatmap = data['heatmap'].to(self.device, dtype=torch.float32)
             keypoints, labels = data['keypoints'].to(self.device, dtype=torch.float32), data['class_labels'].to(self.device, dtype=torch.int8)
             self.optimizer.zero_grad() #Reset gradients
-
+            
             #! seg_out = output from segmentation head (B x N_OUTPUTS x H x W)
             #! heatmap = 1D heatmap (B x N_OUTPUTS x H x 1)
             #! coords = 1D coordinates (B x N_OUTPUTS x 1)
 
             pred_seg, pred_heatmap, pred_coords = self.model(sag_img, cor_img)
-            l1_loss = dsntnn.l1_losses(pred_coords.unsqueeze(-1), keypoints.unsqueeze(-1))
-            js_reg = dsntnn.js_reg_losses(
-                heatmaps=pred_heatmap[..., 0], mu_t=keypoints.unsqueeze(-1), sigma_t=10)
+            #* Loss + Regularisation
+            l1_loss = torch.nn.functional.l1_loss(
+                pred_coords.unsqueeze(-1), keypoints.unsqueeze(-1), reduction='none').mean(-1)
+            js_reg = cl.js_reg(pred_heatmap[..., 0], heatmap)
             loss = dsntnn.average_loss(l1_loss+js_reg, mask=labels)
             self.writer.train_loss.append(loss.item())
+            #* Optimiser step
             loss.backward()
             self.optimizer.step()
-
+        
             if write2tensorboard:
                 # ** Write inputs to tensorboard
                 if epoch % writer_interval ==0  and idx == 0:
@@ -100,7 +102,7 @@ class Locator():
                     self.writer.plot_inputs(
                         f'Coronal Inputs at epoch {epoch}', cor_img)
                     self.writer.plot_histogram(
-                        f'Target heatmap at epoch {epoch}', heatmaps, labels=labels)
+                        f'Target heatmap at epoch {epoch}', heatmap, targets=[None, labels])
 
         print('Train Loss:', np.mean(self.writer.train_loss))
         self.writer.add_scalar('Training Loss', np.mean(
@@ -114,28 +116,31 @@ class Locator():
                 #* Load data
                 sag_img = data['sag_image'].to(self.device, dtype=torch.float32)
                 cor_img = data['cor_image'].to(self.device, dtype=torch.float32)
-
+                heatmap = data['heatmap'].to(self.device, dtype=torch.float32)
                 keypoints, labels = data['keypoints'].to(
                     self.device, dtype=torch.float32), data['class_labels'].to(self.device, dtype=torch.int8)
-    
                 pred_seg, pred_heatmap, pred_coords = self.model(
                     sag_img, cor_img)
+                #* Loss + Regularisation
                 l1_loss = dsntnn.l1_losses(
                     pred_coords.unsqueeze(-1), keypoints.unsqueeze(-1))
-                js_reg = dsntnn.js_reg_losses(
-                    heatmaps=pred_heatmap[..., 0], mu_t=keypoints.unsqueeze(-1), sigma_t=10)
-
+                js_reg = cl.js_reg(pred_heatmap[..., 0], heatmap)
                 loss = dsntnn.average_loss(l1_loss+js_reg, mask=labels)
                 self.writer.val_loss.append(loss.item())
+                #todo only write those that count towards loss
+                self.writer.reg.append(js_reg.mean().item())
+                self.writer.l1.append(l1_loss.mean().item())
 
                 if write2tensorboard:
                     #* Write predictions to tensorboard
                     if epoch % writer_interval == 0 and idx==0:
                         self.writer.plot_prediction(f'Prediction at epoch {epoch}', img=sag_img, prediction=pred_coords, targets=[keypoints, labels])
-                        self.writer.plot_histogram(f'Predicted Heatmap at epoch {epoch}', pred_heatmap[..., 0], labels=labels)
+                        self.writer.plot_histogram(f'Predicted Heatmap at epoch {epoch}', pred_heatmap[..., 0], targets=[heatmap, labels])
             print('Validation Loss:', np.mean(self.writer.val_loss))
             self.scheduler.step(np.mean(self.writer.val_loss))
             self.writer.add_scalar('Validation Loss', np.mean(self.writer.val_loss), epoch)
+            self.writer.add_scalar('Regularisation', np.mean(self.writer.reg), epoch)
+            self.writer.add_scalar('L1-Loss', np.mean(self.writer.l1), epoch)
 
     def viz_model(self, output_path='./logs/'):
         #~ View model architecture
