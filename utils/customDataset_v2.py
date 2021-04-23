@@ -24,7 +24,8 @@ class spineDataset(Dataset):
         #//self.masks = self.load_data(dir_path + 'targets/masks/')
         self.coordinates =  self.load_coordinates(dir_path + 'targets/coordinates/')
         self.norm_coronal_inputs = self.normalise_inputs(self.coronal_inputs)
-        self.norm_sagittal_inputs = self.normalise_inputs(self.sagittal_inputs)#
+        self.norm_sagittal_inputs = self.normalise_inputs(self.sagittal_inputs)
+        self.norm_heatmaps = self.normalise_inputs(self.heatmaps)
         self.pre_processing_fn = self.get_preprocessing(pre_processing_fn)
         self.ids = self.get_ids()
         self.transforms = transforms
@@ -132,7 +133,9 @@ class spineDataset(Dataset):
             sag_img = self.sagittal_inputs['slices'][index]
             cor_img = self.coronal_inputs['slices'][index]
         #* Apply softmax across each channel of heatmap
+       #// heatmap = self.norm_heatmaps[index]
         heatmap = self.heatmaps['slices'][index]
+        
         #// mask = np.argmax(self.masks['slices'][index], axis=-1)
         keypoints, labels = self.convert2keypoints(pid)
         if self.transforms:

@@ -49,9 +49,12 @@ class customWriter(SummaryWriter):
             ax.imshow(plt_img)
             if targets is not None:
                 coords, verts = targets
+                coords = coords.cpu()
+                coords = dsntnn.normalized_to_pixel_coordinates(
+                    coords[idx], size=plt_img.shape[0])
                 for i in range(len(self.ordered_verts)):
                     if verts[idx, i] == 1:
-                        y = coords[idx, i]
+                        y = coords[i]
                         ax.axhline(y, c='y')
                         ax.text(0, y-5, self.ordered_verts[i], color='white')
             ax.set_title(
