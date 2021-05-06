@@ -12,9 +12,10 @@ import SimpleITK as sitk
 import albumentations as A
 from scipy.special import softmax
 import dsntnn
+import scipy.stats as ss
 
 class spineDataset(Dataset):
-    def __init__(self, dir_path, pre_processing_fn=None, transforms=None, normalise=True):
+    def __init__(self, dir_path, pre_processing_fn=None, transforms=None, normalise=True, validation=False):
         #~Custom dataset for spine models with coronal and sagittal inputs 
         super(spineDataset, self).__init__()
         
@@ -30,6 +31,7 @@ class spineDataset(Dataset):
         self.ids = self.get_ids()
         self.transforms = transforms
         self.normalise = normalise
+        self.validation = validation
         self.img_size = self.coronal_inputs['slices'].shape[1:3]
         self.ordered_verts = ['T4', 'T5', 'T6', 'T7', 'T8', 'T9',
                               'T10', 'T11', 'T12', 'L1', 'L2', 'L3', 'L4']
@@ -118,6 +120,19 @@ class spineDataset(Dataset):
         ]
         return A.Compose(_transform)
 
+    @staticmethod
+    def sample_keypoints(keypoints, sigma=25):
+        sampled_points = []
+        for point in keypoints:
+            norm = ss.norm(loc=point[0], scale=sigma)
+            x = norm.rvs()
+            #print('Point/RVS', point[0], x)
+            coord = [x, point[1]]
+            sampled_points.append(coord)
+        out_points = np.array(sampled_points)
+        return out_points
+
+
     def __len__(self):
         return len(self.coronal_inputs['id'])
 
@@ -138,6 +153,9 @@ class spineDataset(Dataset):
         
         #// mask = np.argmax(self.masks['slices'][index], axis=-1)
         keypoints, labels = self.convert2keypoints(pid)
+        #!! Don't randomly sample keypoints when doing validation
+        if not self.validation:
+            keypoints = self.sample_keypoints(keypoints, sigma=3)
         if self.transforms:
             #* Apply transforms
             augmented = self.transforms(

@@ -15,7 +15,7 @@ def js_reg(p, q):
     m = 0.5*(p + q)
     return 0.5*kl_reg(p, m) + 0.5*kl_reg(q, m)
 
-def kl_reg(p, q):
+def kl_reg(q, p):
     #~ Kullback-Leibler Divergence
     eps=1e-24
     #* D(P||Q) = P log P/Q 

@@ -26,7 +26,7 @@ class customUNet(nn.Module):
         super(customUNet, self).__init__()
         self.input_size = input_size
         self.decoder_channels = [256, 128, 64, 32, 16]
-        
+        self.decoder_out_channels = [4*x for x in self.decoder_channels]
         # For classifier at end of segmentation head
         self.aux_params = dict(
             pooling='avg',             # one of 'avg', 'max'
@@ -45,28 +45,34 @@ class customUNet(nn.Module):
             decoder_channels=tuple(self.decoder_channels)
         )
         # Encoder
-        self.encoder = self.model.encoder
+        self.sag_encoder = self.model.encoder
+        self.cor_encoder = self.model.encoder
         # Update decoder 
         self.decoder = smp.unet.decoder.UnetDecoder(
-            encoder_channels=self.encoder.out_channels,
-            decoder_channels=tuple(self.decoder_channels),
+            encoder_channels=tuple([2*x for x in self.sag_encoder.out_channels]),
+            decoder_channels=tuple(self.decoder_out_channels),
             n_blocks=5,
             use_batchnorm=True,
             center=False, #!! True if using vgg
             attention_type=None,
         )
-        self.segmentation_head = self.model.segmentation_head
+
+        self.segmentation_head = smp.base.SegmentationHead(
+            in_channels=self.decoder_out_channels[-1],
+            out_channels=n_outputs
+            )
         self.hm_conv = nn.Conv2d(13, n_outputs, kernel_size=(1, self.input_size[1]), bias=False)
 
     def forward(self, sag_x, cor_x):
         #todo FIX channels 
         #* Output are features at every spatial resolution
-        sag_out = self.encoder.forward(sag_x)
-        cor_out = self.encoder.forward(cor_x)
+        sag_out = self.sag_encoder.forward(sag_x)
+        cor_out = self.cor_encoder.forward(cor_x)
 
         #* Combine Sagittal + coronal at each resolution
-        #output = [torch.cat([sag,cor], dim=1) for sag, cor in zip(sag_out, cor_out)]
-        output = [sag*cor for sag, cor in zip(sag_out, cor_out)]
+        output = [torch.cat([sag,cor], dim=1) for sag, cor in zip(sag_out, cor_out)]
+
+        #output = [sag*cor for sag, cor in zip(sag_out, cor_out)]
         #* Upscale to match input spatial resolution
         decoder_output = self.decoder.forward(*output)
         #* Get correct number of channels

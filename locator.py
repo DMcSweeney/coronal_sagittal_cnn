@@ -60,7 +60,7 @@ def main():
         transforms=train_transforms, normalise=True)
     valid_dataset = spineDataset(
         valid_path, pre_processing_fn=pre_processing_fn, 
-        transforms=valid_transforms, normalise=True)
+        transforms=valid_transforms, normalise=True, validation=True)
     test_dataset = spineDataset(
         test_path, pre_processing_fn=pre_processing_fn,
         transforms=test_transforms, normalise=True)
@@ -68,12 +68,14 @@ def main():
     # ** Convert to Dataloaders
     train_generator = DataLoader(train_dataset, batch_size=batch_size)
     valid_generator = DataLoader(valid_dataset, batch_size=batch_size)
-    test_generator = DataLoader(test_dataset, batch_size=test_dataset.__len__())
+    test_generator = DataLoader(test_dataset, batch_size=1)
 
     #!! TRAINING + VALIDATION
     model = tl.Locator(train_generator, valid_generator, test_generator, dir_name='exp1', num_epochs=200)
-    model.forward()
-    model.inference(plot_output=True)
+    model.forward(model_name='sampled_keypoint_model.pt')
+    #model.train(epoch=0)
+    #model.validation(epoch=0)
+    #model.inference(plot_output=True)
     torch.cuda.empty_cache()
     
     

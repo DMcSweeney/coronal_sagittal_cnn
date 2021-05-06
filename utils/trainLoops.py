@@ -48,7 +48,7 @@ class Locator():
         self.best_loss = 10000 # Initialise loss for saving best model
         self.output_path = output_path
     
-    def forward(self, num_epochs=200):
+    def forward(self, num_epochs=200, model_name='best_model.pt'):
 
         #~ Forward pass def
         for epoch in range(num_epochs+1):
@@ -59,7 +59,7 @@ class Locator():
             #~ VALIDATION
             self.validation(epoch=epoch, write2tensorboard=True, writer_interval=10)
             #* Save best model
-            self.save_best_model()
+            self.save_best_model(model_name=model_name)
         
     def train(self, epoch, write2tensorboard=True, writer_interval=20, viz_model=False):
         #~Main training loop
@@ -149,23 +149,46 @@ class Locator():
         print('Inference...')
         self.model.load_state_dict(torch.load(self.output_path + model_name))
         self.model.eval()
+        all_ids = []
+        all_pred_coords = []
+        all_pred_heatmaps = []
+        all_labels = []
+
         with torch.set_grad_enabled(False):
             for idx, data in enumerate(tqdm(self.test_dataLoader)):
                 #* Load data
                 sag_img = data['sag_image'].to(
                     self.device, dtype=torch.float32)
                 cor_img = data['cor_image'].to(self.device, dtype=torch.float32)
+                heatmap = data['heatmap'].to(self.device, dtype=torch.float32)
                 keypoints, labels = data['keypoints'].to(
                     self.device, dtype=torch.float32), data['class_labels'].to(self.device, dtype=torch.int8)
                 ids = data['id']
 
                 #* Get predictions
                 pred_seg, pred_heatmap, pred_coords = self.model(sag_img, cor_img)
-
+               
                 if plot_output:
                     #* Plot predictions
                     #todo Add histograms + data for analysis
                     self.plot_predictions(ids, sag_img, pred_coords, targets=[keypoints, labels])
+                    self.plot_distribution(ids, pred_heatmap[..., 0], targets=[heatmap, labels])
+                
+                all_ids.append(ids)
+                all_pred_coords.append(pred_coords.cpu().numpy())
+                all_pred_heatmaps.append(pred_heatmap.cpu().numpy())
+                all_labels.append(labels.cpu().numpy())
+
+        all_ids = np.concatenate(all_ids, axis=0)
+        all_pred_coords = np.concatenate(all_pred_coords, axis=0)
+        all_pred_heatmaps = np.concatenate(all_pred_heatmaps, axis=0)
+        all_labels = np.concatenate(all_labels, axis=0)
+
+        print(all_ids.shape, all_pred_heatmaps.shape, all_pred_coords.shape, all_labels.shape)
+        #** Save predictions to npz file for post-processing
+        print('SAVING PREDICTIONS...')
+        np.savez(self.output_path + 'predictions.npz', ids=all_ids,
+                    coords=all_pred_coords, heatmaps=all_pred_heatmaps, labels=all_labels)
 
     def viz_model(self, output_path='./logs/'):
         #~ View model architecture
@@ -190,7 +213,7 @@ class Locator():
             ax.imshow(heatmap[0, i])
             fig.savefig(output_path+f'heatmap_{i}.png')
 
-    def save_best_model(self):
+    def save_best_model(self, model_name='best_model.pt'):
         #~ Check if latest validation is min. If True, save.
         loss1 = np.mean(self.writer.val_loss)
         is_best = loss1 < self.best_loss
@@ -198,7 +221,7 @@ class Locator():
         if is_best:
             print('Saving best model')
             torch.save(self.model.state_dict(),
-            self.output_path + 'best_model.pt')
+            self.output_path + model_name)
     
     def plot_predictions(self, names, img, pred, targets=None):
         #~Write model predictions to files
@@ -230,7 +253,29 @@ class Locator():
                         plt.text(0, y-5, self.writer.ordered_verts[i], color='white')
             fig.savefig(self.output_path + f'images/{names[idx]}.png')
             plt.clf()
+        plt.close()
 
-
-
-
+    def plot_distribution(self, names, pred, targets=None):
+        #~ Plot distributiions to file
+        fig =  plt.figure(figsize=(10, 7.5))
+        plt.tight_layout()
+        histogram = pred.cpu().numpy()
+        x = np.linspace(0, histogram.shape[-1], num=histogram.shape[-1])
+        for idx in np.arange(len(names)):
+            for channel in range(histogram[idx].shape[0]):
+                vert = self.writer.ordered_verts[channel]
+                if targets is not None:
+                    #* Plot target heatmaps
+                    heatmaps, labels = targets
+                    if heatmaps is not None and labels[idx, channel] == 1:
+                        tgt = heatmaps[idx, channel].cpu().numpy()
+                        plt.plot(x, tgt, '-', color=self.writer.hist_colours[channel])
+                    if labels[idx, channel] == 1:
+                        #* Only plot visible levels
+                        data = histogram[idx, channel]
+                        plt.plot(x, data, '--', label=vert,
+                                color=self.writer.hist_colours[channel])
+            plt.legend(loc='upper right')
+            fig.savefig(self.output_path + f'heatmaps/{names[idx]}.png')
+            plt.clf()
+        plt.close()
