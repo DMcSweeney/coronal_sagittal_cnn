@@ -61,6 +61,16 @@ class customWriter(SummaryWriter):
                 'Input @ epoch: {} - idx: {}'.format(self.epoch, idx))
         self.add_figure(title, fig)
 
+    def plot_heatmap(self, title, histogram, targets=None):
+        fig, ax = plt.subplots(1, 2, figsize=(20, 10))
+        
+
+
+
+
+
+
+
     def plot_histogram(self, title, histogram, targets=None):
         fig = plt.figure(figsize=(25, 15))
         plt.tight_layout()

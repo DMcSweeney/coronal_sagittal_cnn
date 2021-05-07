@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from scipy.ndimage import zoom
 
 from tqdm import tqdm
 import dsntnn
@@ -20,7 +21,7 @@ from torchviz import make_dot
 import graphviz
 from torch.autograd import Variable
 
-
+import seaborn as sns
 
 import utils.customModel_v2 as cm2
 import utils.customWriter_v2 as cw2
@@ -87,15 +88,16 @@ class Locator():
 
             pred_seg, pred_heatmap, pred_coords = self.model(sag_img, cor_img)
             #* Loss + Regularisation
-            l1_loss = torch.nn.functional.l1_loss(
-                pred_coords.unsqueeze(-1), keypoints.unsqueeze(-1), reduction='none').mean(-1)
+
+            l1_loss = torch.nn.functional.mse_loss(
+                pred_coords, keypoints, reduction='none')
             js_reg = cl.js_reg(pred_heatmap[..., 0], heatmap)
             loss = dsntnn.average_loss(l1_loss+js_reg, mask=labels)
             self.writer.train_loss.append(loss.item())
             #* Optimiser step
             loss.backward()
             self.optimizer.step()
-            
+
             if write2tensorboard:
                 # ** Write inputs to tensorboard
                 if epoch % writer_interval ==0  and idx == 0:
@@ -110,7 +112,7 @@ class Locator():
         self.writer.add_scalar('Training Loss', np.mean(
             self.writer.train_loss), epoch)
             
-    def validation(self, epoch, write2tensorboard=True, writer_interval=10):
+    def validation(self, epoch, write2tensorboard=True, writer_interval=10, write_gif=True):
         #~Validation loop
         with torch.set_grad_enabled(False):
             print('Validation...')
@@ -124,15 +126,17 @@ class Locator():
                 pred_seg, pred_heatmap, pred_coords = self.model(
                     sag_img, cor_img)
                 #* Loss + Regularisation
-                l1_loss = dsntnn.l1_losses(
-                    pred_coords.unsqueeze(-1), keypoints.unsqueeze(-1))
-                
+                l1_loss = torch.nn.functional.mse_loss(
+                    pred_coords, keypoints, reduction='none')
                 js_reg = cl.js_reg(pred_heatmap[..., 0], heatmap)
                 loss = dsntnn.average_loss(l1_loss+js_reg, mask=labels)
                 self.writer.val_loss.append(loss.item())
-                self.writer.reg.append(js_reg[labels==1].mean().item())
-                self.writer.l1.append(l1_loss[labels==1].mean().item())
-                
+                self.writer.reg.append(js_reg[labels == 1].mean().item())
+                self.writer.l1.append(l1_loss[labels == 1].mean().item())
+                if write_gif:
+                    if idx == 0:
+                        self.write2file(
+                            pred_heatmap[0, ..., 0], heatmap[0], epoch=epoch)
                 if write2tensorboard:
                     #* Write predictions to tensorboard
                     if epoch % writer_interval == 0 and idx==0:
@@ -173,6 +177,7 @@ class Locator():
                     #todo Add histograms + data for analysis
                     self.plot_predictions(ids, sag_img, pred_coords, targets=[keypoints, labels])
                     self.plot_distribution(ids, pred_heatmap[..., 0], targets=[heatmap, labels])
+                    self.plot_heatmap(ids, pred_heatmap[..., 0], heatmap)
                 
                 all_ids.append(ids)
                 all_pred_coords.append(pred_coords.cpu().numpy())
@@ -203,15 +208,23 @@ class Locator():
         graph.render(output_path + 'graph.png')
         #summary(model, input_shape)
 
-    def write2file(self, array, output_path='./logs/heatmaps/'):
+    def write2file(self, array, targets, epoch,output_path='./logs/gifs/'):
         #~ Write arrays to file for sanity checking 
-        print('Writing to file')
+        #* Colormaps for heatmaps
+        plt.style.use('dark_background')
+        cmap = sns.cubehelix_palette(
+            start=0.5, rot=-1., hue=1, gamma=1, as_cmap=True)
         arr = array.cpu().detach().numpy()
-        heatmap = np.tile(arr[..., np.newaxis], reps=(1, 1, 256))
-        for i in range(heatmap.shape[1]):
-            fig, ax = plt.subplots(1, 1, figsize=(10, 10))
-            ax.imshow(heatmap[0, i])
-            fig.savefig(output_path+f'heatmap_{i}.png')
+        targets = targets.cpu().numpy()
+        dist = zoom(input=arr, zoom=(10, 1), order=1)
+        tgt = zoom(input=targets, zoom=(10, 1), order=1)
+        fig, ax = plt.subplots(1, 2, figsize=(5, 10))
+        ax[0].set_title(f'Epoch: {epoch}')
+        ax[1].set_title('Ground-truth')
+        ax[0].imshow(dist.T, cmap=cmap)
+        ax[1].imshow(tgt.T, cmap=cmap)
+        fig.savefig(output_path + f'heatmap_epoch_{epoch}.png')    
+        plt.close() 
 
     def save_best_model(self, model_name='best_model.pt'):
         #~ Check if latest validation is min. If True, save.
@@ -224,6 +237,7 @@ class Locator():
             self.output_path + model_name)
     
     def plot_predictions(self, names, img, pred, targets=None):
+        plt.style.use('dark_background')
         #~Write model predictions to files
         fig = plt.figure(figsize=(10,10))
         plt.tight_layout()
@@ -257,6 +271,7 @@ class Locator():
 
     def plot_distribution(self, names, pred, targets=None):
         #~ Plot distributiions to file
+        plt.style.use('dark_background')
         fig =  plt.figure(figsize=(10, 7.5))
         plt.tight_layout()
         histogram = pred.cpu().numpy()
@@ -276,6 +291,27 @@ class Locator():
                         plt.plot(x, data, '--', label=vert,
                                 color=self.writer.hist_colours[channel])
             plt.legend(loc='upper right')
+            fig.savefig(self.output_path + f'distributions/{names[idx]}.png')
+            plt.clf()
+        plt.close()
+
+    def plot_heatmap(self, names, pred, target):
+        #~ Write arrays to file for sanity checking
+        #* Colormaps for heatmaps
+        plt.style.use('dark_background')
+        cmap = sns.cubehelix_palette(
+            start=0.5, rot=-1., hue=1, gamma=1, as_cmap=True)
+        fig, ax = plt.subplots(1, 2, figsize=(5, 10))   
+        for idx in np.arange(len(names)):
+            arr = pred[idx].cpu().numpy()
+            targets = target[idx].cpu().numpy()
+            tgt = zoom(input=targets, zoom=(10, 1), order=1)
+            dist = zoom(input=arr, zoom=(10, 1), order=1)
+
+            ax[0].set_title('Prediction')
+            ax[1].set_title('Ground-truth')
+            ax[0].imshow(dist.T, cmap=cmap)
+            ax[1].imshow(tgt.T, cmap=cmap)
             fig.savefig(self.output_path + f'heatmaps/{names[idx]}.png')
             plt.clf()
         plt.close()

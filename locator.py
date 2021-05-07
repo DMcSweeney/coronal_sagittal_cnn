@@ -60,7 +60,7 @@ def main():
         transforms=train_transforms, normalise=True)
     valid_dataset = spineDataset(
         valid_path, pre_processing_fn=pre_processing_fn, 
-        transforms=valid_transforms, normalise=True, validation=True)
+        transforms=valid_transforms, normalise=True)
     test_dataset = spineDataset(
         test_path, pre_processing_fn=pre_processing_fn,
         transforms=test_transforms, normalise=True)
@@ -72,12 +72,12 @@ def main():
 
     #!! TRAINING + VALIDATION
     model = tl.Locator(train_generator, valid_generator, test_generator, dir_name='exp1', num_epochs=200)
-    model.forward(model_name='sampled_keypoint_model.pt')
+    #model.forward(model_name='mse_model.pt')
     #model.train(epoch=0)
     #model.validation(epoch=0)
-    #model.inference(plot_output=True)
+    model.inference(plot_output=True, model_name='mse_model.pt')
     torch.cuda.empty_cache()
     
-    
+        
 if __name__ == '__main__':
     main()

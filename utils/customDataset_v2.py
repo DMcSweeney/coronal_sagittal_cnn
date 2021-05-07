@@ -15,7 +15,7 @@ import dsntnn
 import scipy.stats as ss
 
 class spineDataset(Dataset):
-    def __init__(self, dir_path, pre_processing_fn=None, transforms=None, normalise=True, validation=False):
+    def __init__(self, dir_path, pre_processing_fn=None, transforms=None, normalise=True, sample_points=False):
         #~Custom dataset for spine models with coronal and sagittal inputs 
         super(spineDataset, self).__init__()
         
@@ -31,7 +31,7 @@ class spineDataset(Dataset):
         self.ids = self.get_ids()
         self.transforms = transforms
         self.normalise = normalise
-        self.validation = validation
+        self.sample_points = sample_points
         self.img_size = self.coronal_inputs['slices'].shape[1:3]
         self.ordered_verts = ['T4', 'T5', 'T6', 'T7', 'T8', 'T9',
                               'T10', 'T11', 'T12', 'L1', 'L2', 'L3', 'L4']
@@ -154,7 +154,7 @@ class spineDataset(Dataset):
         #// mask = np.argmax(self.masks['slices'][index], axis=-1)
         keypoints, labels = self.convert2keypoints(pid)
         #!! Don't randomly sample keypoints when doing validation
-        if not self.validation:
+        if self.sample_points:
             keypoints = self.sample_keypoints(keypoints, sigma=3)
         if self.transforms:
             #* Apply transforms
