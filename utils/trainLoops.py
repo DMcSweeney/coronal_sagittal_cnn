@@ -179,8 +179,10 @@ class Locator():
                     self.plot_distribution(ids, pred_heatmap[..., 0], targets=[heatmap, labels])
                     self.plot_heatmap(ids, pred_heatmap[..., 0], heatmap)
                 
+
+
                 all_ids.append(ids)
-                all_pred_coords.append(pred_coords.cpu().numpy())
+                all_pred_coords.append(pred_coords.cpu().numpy()))
                 all_pred_heatmaps.append(pred_heatmap.cpu().numpy())
                 all_labels.append(labels.cpu().numpy())
 
@@ -223,7 +225,7 @@ class Locator():
         ax[1].set_title('Ground-truth')
         ax[0].imshow(dist.T, cmap=cmap)
         ax[1].imshow(tgt.T, cmap=cmap)
-        fig.savefig(output_path + f'heatmap_epoch_{epoch}.png')    
+        fig.savefig(output_path + f'no_scheduler_heatmap_epoch_{epoch}.png')    
         plt.close() 
 
     def save_best_model(self, model_name='best_model.pt'):

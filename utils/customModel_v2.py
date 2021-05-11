@@ -64,7 +64,7 @@ class customUNet(nn.Module):
         self.hm_conv = nn.Conv2d(13, n_outputs, kernel_size=(1, self.input_size[1]), bias=False)
 
     def forward(self, sag_x, cor_x):
-        #todo FIX channels 
+        
         #* Output are features at every spatial resolution
         sag_out = self.sag_encoder.forward(sag_x)
         cor_out = self.cor_encoder.forward(cor_x)

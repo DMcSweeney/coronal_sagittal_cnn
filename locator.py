@@ -72,10 +72,10 @@ def main():
 
     #!! TRAINING + VALIDATION
     model = tl.Locator(train_generator, valid_generator, test_generator, dir_name='exp1', num_epochs=200)
-    #model.forward(model_name='mse_model.pt')
+    model.forward(model_name='mse_model.pt')
     #model.train(epoch=0)
     #model.validation(epoch=0)
-    model.inference(plot_output=True, model_name='mse_model.pt')
+    #model.inference(plot_output=True, model_name='mse_model.pt')
     torch.cuda.empty_cache()
     
         
