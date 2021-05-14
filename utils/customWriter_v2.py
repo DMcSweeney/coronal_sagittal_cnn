@@ -23,6 +23,7 @@ class customWriter(SummaryWriter):
         self.val_loss = []
         self.reg = [] #Regulariser
         self.l1 = []
+        self.ce = []
         self.ordered_verts = ['T4', 'T5', 'T6', 'T7', 'T8', 'T9',
                               'T10', 'T11', 'T12', 'L1', 'L2', 'L3', 'L4']
         self.hist_colours = ['r', 'b', 'g', 'c', 'm', 'y', 'orange', 'brown', 'pink', 'purple', 'k', 'gray', 'olive']
@@ -36,7 +37,7 @@ class customWriter(SummaryWriter):
         return (img-img.min())/(img.max()-img.min())
 
     def reset_losses(self):
-        self.train_loss, self.val_loss, self.reg, self.l1 = [], [], [], []
+        self.train_loss, self.val_loss, self.reg, self.l1, self.ce = [], [], [], [], []
 
     def plot_inputs(self, title, img, targets=None):
         fig = plt.figure(figsize=(10, 10))
@@ -60,14 +61,6 @@ class customWriter(SummaryWriter):
             ax.set_title(
                 'Input @ epoch: {} - idx: {}'.format(self.epoch, idx))
         self.add_figure(title, fig)
-
-    def plot_heatmap(self, title, histogram, targets=None):
-        fig, ax = plt.subplots(1, 2, figsize=(20, 10))
-        
-
-
-
-
 
 
 

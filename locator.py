@@ -33,10 +33,10 @@ def main():
     train_transforms = A.Compose([A.HorizontalFlip(p=0.5),
             # A.ShiftScaleRotate(scale_limit=0.2, rotate_limit=0,
             #                      shift_limit=0, p=1, border_mode=0),
-            #A.GaussNoise(var_limit=0.025, p=0.5, per_channel=False),
+            A.GaussNoise(var_limit=0.025, p=0.5, per_channel=False),
             #A.Perspective(p=0.5),
-            #A.RandomCrop(height=342, width=512, p=0.5),
-            #A.Resize(height=512, width=512)
+            A.RandomCrop(height=342, width=512, p=0.5),
+            A.Resize(height=512, width=512)
             ], 
         keypoint_params=A.KeypointParams(format=('yx'), label_fields=['class_labels'], remove_invisible=False), 
         additional_targets={'image1': 'image'})
@@ -72,10 +72,10 @@ def main():
 
     #!! TRAINING + VALIDATION
     model = tl.Locator(train_generator, valid_generator, test_generator, dir_name='exp1', num_epochs=200)
-    model.forward(model_name='mse_model.pt')
+    model.forward(model_name='w_classifier.pt')
     #model.train(epoch=0)
     #model.validation(epoch=0)
-    #model.inference(plot_output=True, model_name='mse_model.pt')
+    #model.inference(plot_output=True, model_name='sharpen_maps.pt')
     torch.cuda.empty_cache()
     
         

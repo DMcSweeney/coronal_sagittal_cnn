@@ -42,7 +42,7 @@ class Locator():
         self.test_dataLoader = test_dataLoader
         self.model = cm2.customUNet(n_outputs=n_outputs).cuda()
         self.optimizer = Adam(self.model.parameters(), lr=learning_rate)
-        self.criterion = nn.L1Loss().cuda()
+        self.criterion = nn.BCELoss().cuda()
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', verbose=True)
         self.num_epochs = num_epochs
         self.writer = cw2.customWriter(log_dir=f'./runs/{dir_name}', batch_size=batch_size, num_classes=n_outputs)
@@ -58,7 +58,7 @@ class Locator():
             #~TRAINING
             self.train(epoch=epoch, write2tensorboard=True, writer_interval=20)
             #~ VALIDATION
-            self.validation(epoch=epoch, write2tensorboard=True, writer_interval=10)
+            self.validation(epoch=epoch, write2tensorboard=True, writer_interval=10, write_gif=False)
             #* Save best model
             self.save_best_model(model_name=model_name)
         
@@ -79,25 +79,27 @@ class Locator():
             sag_img = data['sag_image'].to(self.device, dtype=torch.float32)
             cor_img = data['cor_image'].to(self.device, dtype=torch.float32)
             heatmap = data['heatmap'].to(self.device, dtype=torch.float32)
-            keypoints, labels = data['keypoints'].to(self.device, dtype=torch.float32), data['class_labels'].to(self.device, dtype=torch.int8)
+            keypoints, labels = data['keypoints'].to(self.device, dtype=torch.float32), data['class_labels'].to(self.device, dtype=torch.float32)
             self.optimizer.zero_grad() #Reset gradients
             
             #! seg_out = output from segmentation head (B x N_OUTPUTS x H x W)
             #! heatmap = 1D heatmap (B x N_OUTPUTS x H x 1)
             #! coords = 1D coordinates (B x N_OUTPUTS x 1)
 
-            pred_seg, pred_heatmap, pred_coords = self.model(sag_img, cor_img)
+            pred_seg, pred_heatmap, pred_coords, pred_labels = self.model(sag_img, cor_img)
             #* Loss + Regularisation
-
             l1_loss = torch.nn.functional.mse_loss(
                 pred_coords, keypoints, reduction='none')
-            js_reg = cl.js_reg(pred_heatmap[..., 0], heatmap)
+
+            js_reg = cl.kl_reg(pred_heatmap, heatmap)
+            ce_loss = self.criterion(pred_labels, labels)
+
             loss = dsntnn.average_loss(l1_loss+js_reg, mask=labels)
+            loss += ce_loss
             self.writer.train_loss.append(loss.item())
             #* Optimiser step
             loss.backward()
             self.optimizer.step()
-
             if write2tensorboard:
                 # ** Write inputs to tensorboard
                 if epoch % writer_interval ==0  and idx == 0:
@@ -122,26 +124,30 @@ class Locator():
                 cor_img = data['cor_image'].to(self.device, dtype=torch.float32)
                 heatmap = data['heatmap'].to(self.device, dtype=torch.float32)
                 keypoints, labels = data['keypoints'].to(
-                    self.device, dtype=torch.float32), data['class_labels'].to(self.device, dtype=torch.int8)
-                pred_seg, pred_heatmap, pred_coords = self.model(
+                    self.device, dtype=torch.float32), data['class_labels'].to(self.device, dtype=torch.float32)
+                pred_seg, pred_heatmap, pred_coords, pred_labels = self.model(
                     sag_img, cor_img)
                 #* Loss + Regularisation
                 l1_loss = torch.nn.functional.mse_loss(
                     pred_coords, keypoints, reduction='none')
-                js_reg = cl.js_reg(pred_heatmap[..., 0], heatmap)
+                js_reg = cl.kl_reg(pred_heatmap, heatmap)
+                ce_loss = self.criterion(pred_labels, labels)
                 loss = dsntnn.average_loss(l1_loss+js_reg, mask=labels)
+                loss += ce_loss #* Combine detection + location
                 self.writer.val_loss.append(loss.item())
                 self.writer.reg.append(js_reg[labels == 1].mean().item())
                 self.writer.l1.append(l1_loss[labels == 1].mean().item())
+                self.writer.ce.append(ce_loss.item())
                 if write_gif:
                     if idx == 0:
                         self.write2file(
-                            pred_heatmap[0, ..., 0], heatmap[0], epoch=epoch)
+                            pred_heatmap[0], heatmap[0], epoch=epoch)
                 if write2tensorboard:
                     #* Write predictions to tensorboard
                     if epoch % writer_interval == 0 and idx==0:
+                        print('Predicted Labels + GT: ', pred_labels, labels)
                         self.writer.plot_prediction(f'Prediction at epoch {epoch}', img=sag_img, prediction=pred_coords, targets=[keypoints, labels])
-                        self.writer.plot_histogram(f'Predicted Heatmap at epoch {epoch}', pred_heatmap[..., 0], targets=[heatmap, labels])
+                        self.writer.plot_histogram(f'Predicted Heatmap at epoch {epoch}', pred_heatmap, targets=[heatmap, labels])
             print('Validation Loss:', np.mean(self.writer.val_loss))
             self.scheduler.step(np.mean(self.writer.val_loss))
             self.writer.add_scalar('Validation Loss', np.mean(self.writer.val_loss), epoch)
@@ -178,11 +184,8 @@ class Locator():
                     self.plot_predictions(ids, sag_img, pred_coords, targets=[keypoints, labels])
                     self.plot_distribution(ids, pred_heatmap[..., 0], targets=[heatmap, labels])
                     self.plot_heatmap(ids, pred_heatmap[..., 0], heatmap)
-                
-
-
                 all_ids.append(ids)
-                all_pred_coords.append(pred_coords.cpu().numpy()))
+                all_pred_coords.append(pred_coords.cpu().numpy())
                 all_pred_heatmaps.append(pred_heatmap.cpu().numpy())
                 all_labels.append(labels.cpu().numpy())
 
@@ -194,7 +197,7 @@ class Locator():
         print(all_ids.shape, all_pred_heatmaps.shape, all_pred_coords.shape, all_labels.shape)
         #** Save predictions to npz file for post-processing
         print('SAVING PREDICTIONS...')
-        np.savez(self.output_path + 'predictions.npz', ids=all_ids,
+        np.savez(self.output_path + f'{model_name.split(".")[0]}_preds.npz', ids=all_ids,
                     coords=all_pred_coords, heatmaps=all_pred_heatmaps, labels=all_labels)
 
     def viz_model(self, output_path='./logs/'):
