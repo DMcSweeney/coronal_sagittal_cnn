@@ -15,14 +15,14 @@ import dsntnn
 import scipy.stats as ss
 
 class spineDataset(Dataset):
-    def __init__(self, dir_path, pre_processing_fn=None, transforms=None, normalise=True, sample_points=False):
+    def __init__(self, dir_path, pre_processing_fn=None, transforms=None, normalise=True, sample_points=False, detect=False):
         #~Custom dataset for spine models with coronal and sagittal inputs 
         super(spineDataset, self).__init__()
         
         self.coronal_inputs = self.load_data(dir_path + 'slices/coronal/')
         self.sagittal_inputs = self.load_data(dir_path + 'slices/sagittal/')
         self.heatmaps = self.load_data(dir_path + 'targets/heatmaps/')
-        #//self.masks = self.load_data(dir_path + 'targets/masks/')
+        self.masks = self.load_data(dir_path + 'targets/masks/')
         self.coordinates =  self.load_coordinates(dir_path + 'targets/coordinates/')
         self.norm_coronal_inputs = self.normalise_inputs(self.coronal_inputs)
         self.norm_sagittal_inputs = self.normalise_inputs(self.sagittal_inputs)
@@ -32,6 +32,7 @@ class spineDataset(Dataset):
         self.transforms = transforms
         self.normalise = normalise
         self.sample_points = sample_points
+        self.detect = detect
         self.img_size = self.coronal_inputs['slices'].shape[1:3]
         self.ordered_verts = ['T4', 'T5', 'T6', 'T7', 'T8', 'T9',
                               'T10', 'T11', 'T12', 'L1', 'L2', 'L3', 'L4']
@@ -150,8 +151,8 @@ class spineDataset(Dataset):
         #* Apply softmax across each channel of heatmap
        #// heatmap = self.norm_heatmaps[index]
         heatmap = self.heatmaps['slices'][index]
-        
-        #// mask = np.argmax(self.masks['slices'][index], axis=-1)
+        if self.detect:
+            mask = self.masks['slices'][index]
         keypoints, labels = self.convert2keypoints(pid)
         #!! Don't randomly sample keypoints when doing validation
         if self.sample_points:
@@ -159,24 +160,26 @@ class spineDataset(Dataset):
         if self.transforms:
             #* Apply transforms
             augmented = self.transforms(
-                image=sag_img, image1=cor_img, mask=heatmap, keypoints=keypoints, class_labels=labels)
-            sag_img, cor_img, heatmap, keypoints, labels = augmented.values()
+                image=sag_img, image1=cor_img, mask=heatmap, keypoints=keypoints, class_labels=labels, mask1=mask)
+            sag_img, cor_img, heatmap, keypoints, labels, mask = augmented.values()
             #* Pre-processing for using segmentation-models library (w/ pre-trained encoders)
             if self.pre_processing_fn is not None:
                 sag_prep = self.pre_processing_fn(image=sag_img, mask=heatmap)
-                cor_prep = self.pre_processing_fn(image=cor_img)
-                sag_img, heatmap, cor_img = sag_prep['image'], sag_prep['mask'], cor_prep['image']
+                cor_prep = self.pre_processing_fn(image=cor_img, mask=mask)
+                sag_img, heatmap, cor_img, mask = sag_prep['image'], sag_prep['mask'], cor_prep['image'], cor_prep['mask']
             #* Convert keypoints to tensor
             out_keypoints = self.keypoints2tensor(keypoints, size=sag_img.shape[1])
             #* Convert list of labels to tensor
             out_labels = torch.stack([torch.tensor(elem) for elem in labels], dim=0)
             out_heatmap = np.mean(heatmap, axis=2)
+            out_mask = torch.max(torch.tensor(mask), dim=0, keepdim=True).values
             #~Prepare sample
             sample = {'sag_image': sag_img, 
             'cor_image': cor_img,
             'heatmap': out_heatmap,
             'keypoints': out_keypoints,
             'class_labels': out_labels,
+            'mask': out_mask,
             'id': pid}
         else:
             print('Need some transforms - minimum convert to Tensor')

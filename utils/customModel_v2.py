@@ -17,13 +17,13 @@ import segmentation_models_pytorch as smp
 random.seed(60)
 
 
-class customUNet(nn.Module):
+class customSiameseUNet(nn.Module):
     def __init__(self, n_outputs, input_size=(512,512)):
         """
         seg_outputs = outputs for segmentation map  (should be total verts + 1 - for background)
         class_outputs = outputs for classifier (should be total verts)
         """
-        super(customUNet, self).__init__()
+        super(customSiameseUNet, self).__init__()
         self.input_size = input_size
         self.decoder_channels = [256, 128, 64, 32, 16]
         self.decoder_out_channels = [4*x for x in self.decoder_channels]
@@ -46,8 +46,7 @@ class customUNet(nn.Module):
         )
         #!! Encoder- CHECK THIS SETUP
         self.encoder = self.model.encoder
-        # self.sag_encoder = self.model.encoder
-        # self.cor_encoder = self.model.encoder
+    
         # Update decoder 
         self.decoder = smp.unet.decoder.UnetDecoder(
             encoder_channels=tuple([2*x for x in self.encoder.out_channels]),
@@ -98,3 +97,51 @@ class customUNet(nn.Module):
         sharpened_heatmaps = heatmaps ** alpha
         sharpened_heatmaps /= sharpened_heatmaps.flatten(2).sum(-1, keepdim=True)
         return torch.unsqueeze(sharpened_heatmaps, dim=-1)
+
+
+class customUNet(nn.Module):
+    def __init__(self, n_outputs, input_size=(512,512)):
+        """
+        seg_outputs = outputs for segmentation map  (should be total verts + 1 - for background)
+        class_outputs = outputs for classifier (should be total verts)
+        """
+        super(customUNet, self).__init__()
+        self.input_size = input_size
+        self.decoder_channels = [256, 128, 64, 32, 16]
+        # For classifier at end of segmentation head
+        self.aux_params = dict(
+            pooling='avg',             # one of 'avg', 'max'
+            dropout=0.5,               # dropout ratio, default is None
+            activation=None,      # activation function, default is None
+            classes=n_outputs,                 # define number of output labels
+        )
+        # Model
+        self.model = smp.Unet(
+            encoder_name="resnet34",
+            encoder_weights="imagenet",
+            encoder_depth=5,
+            in_channels=3,
+            classes=1,
+            aux_params=self.aux_params,
+            decoder_channels=tuple(self.decoder_channels)
+        )
+        #* Decompose model
+        self.encoder = self.model.encoder
+        self.decoder = self.model.decoder
+        self.segmentation_head = self.model.segmentation_head
+        self.classifier = self.model.classification_head
+
+    def forward(self, x):
+        #* Output are features at every spatial resolution
+        out = self.encoder.forward(x)
+        #* Upscale to match input spatial resolution
+        decoder_output = self.decoder.forward(*out)
+
+        #* Get correct number of channels
+        seg_out = self.segmentation_head.forward(decoder_output)
+
+        if self.classifier is not None:
+            class_out = self.classifier(out[-1])
+            return seg_out, class_out
+
+        return seg_out

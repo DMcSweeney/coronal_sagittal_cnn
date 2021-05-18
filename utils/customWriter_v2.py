@@ -62,9 +62,7 @@ class customWriter(SummaryWriter):
                 'Input @ epoch: {} - idx: {}'.format(self.epoch, idx))
         self.add_figure(title, fig)
 
-
-
-    def plot_histogram(self, title, histogram, targets=None):
+    def plot_histogram(self, title, histogram, targets=None, detect=False):
         fig = plt.figure(figsize=(25, 15))
         plt.tight_layout()
         histogram = histogram.cpu().numpy()
@@ -72,21 +70,42 @@ class customWriter(SummaryWriter):
         for idx in np.arange(self.batch_size):
             ax = fig.add_subplot(self.batch_size // 2, self.batch_size // 2,
                                  idx+1, label='Histograms')
-            for channel in range(histogram[idx].shape[0]):
-                vert = self.ordered_verts[channel]
-                if targets is not None:
-                    #* Plot target heatmaps
-                    heatmaps, labels = targets
-                    if heatmaps is not None and labels[idx, channel] == 1:
-                        tgt = heatmaps[idx, channel].cpu().numpy()
-                        ax.plot(x, tgt, '-', color=self.hist_colours[channel])
-                    if labels[idx, channel] == 1:
-                        #* Only plot visible levels
-                        data = histogram[idx, channel]
-                        ax.plot(x, data, '--', label=vert, color=self.hist_colours[channel])
+            if not detect:
+                for channel in range(histogram[idx].shape[0]):
+                    vert = self.ordered_verts[channel]
+                    if targets is not None:
+                        #* Plot target heatmaps
+                        heatmaps, labels = targets
+                        if heatmaps is not None and labels[idx, channel] == 1:
+                            tgt = heatmaps[idx, channel].cpu().numpy()
+                            ax.plot(x, tgt, '-', color=self.hist_colours[channel])
+                        if labels[idx, channel] == 1:
+                            #* Only plot visible levels
+                            data = histogram[idx, channel]
+                            ax.plot(x, data, '--', label=vert, color=self.hist_colours[channel])
+            else:
+                data = histogram[idx, 0]
+                ax.plot(x, data, '-')
+            
             ax.set_title(
                 'Histogram @ epoch: {} - idx: {}'.format(self.epoch, idx))
             ax.legend(loc='upper right')
+        self.add_figure(title, fig)
+
+    def plot_mask(self, title, img, prediction):
+        fig = plt.figure(figsize=(10, 10))
+        plt.tight_layout()
+        mask = self.sigmoid(prediction).cpu().numpy()
+        prediction = prediction.cpu().numpy()
+        for idx in np.arange(self.batch_size):
+            ax = fig.add_subplot(self.batch_size // 2, self.batch_size // 2, idx+1, label='Inputs')
+            plt_img = np.moveaxis(img[idx].cpu().numpy(), 0, -1)
+            plt_img = self.norm_img(plt_img)
+            ax.imshow(plt_img)
+            
+            ax.imshow(mask[idx, 0], alpha=0.5)
+        ax.set_title(
+                'Predicted Mask @ epoch: {} - idx: {}'.format(self.epoch, idx))
         self.add_figure(title, fig)
 
     def plot_prediction(self, title, img, prediction, targets=None, predicted=None):

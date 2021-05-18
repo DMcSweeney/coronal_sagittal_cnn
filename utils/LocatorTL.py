@@ -1,5 +1,5 @@
 """
-Objects used for training, to clean-up
+Locator (labelling) model training loop
 """
 
 import os
@@ -34,13 +34,13 @@ class Locator():
       dir_name = directory name used for splitting tensorboard runs.   
     """
     def __init__(self, train_dataLoader, val_dataLoader, test_dataLoader, dir_name, device="cuda:0", 
-                    batch_size=4, n_outputs=13, learning_rate=3e-3, num_epochs=200, output_path='./outputs/'):
+                    batch_size=4, n_outputs=13, learning_rate=3e-3, num_epochs=200, output_path='./outputs/', detect=False):
         self.device = torch.device(device)
         torch.cuda.set_device(self.device)
         self.train_dataLoader = train_dataLoader
         self.val_dataLoader = val_dataLoader
         self.test_dataLoader = test_dataLoader
-        self.model = cm2.customUNet(n_outputs=n_outputs).cuda()
+        self.model = cm2.customSiameseUNet(n_outputs=n_outputs).cuda()
         self.optimizer = Adam(self.model.parameters(), lr=learning_rate)
         self.criterion = nn.BCELoss().cuda()
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', verbose=True)
@@ -48,6 +48,7 @@ class Locator():
         self.writer = cw2.customWriter(log_dir=f'./runs/{dir_name}', batch_size=batch_size, num_classes=n_outputs)
         self.best_loss = 10000 # Initialise loss for saving best model
         self.output_path = output_path
+        self.detect = detect # Toggle whether to do localisation + classification (=False) or just vertebrae detection (= True)
     
     def forward(self, num_epochs=200, model_name='best_model.pt'):
 
@@ -87,19 +88,25 @@ class Locator():
             #! coords = 1D coordinates (B x N_OUTPUTS x 1)
 
             pred_seg, pred_heatmap, pred_coords, pred_labels = self.model(sag_img, cor_img)
-            #* Loss + Regularisation
-            l1_loss = torch.nn.functional.mse_loss(
-                pred_coords, keypoints, reduction='none')
-
-            js_reg = cl.kl_reg(pred_heatmap, heatmap)
-            ce_loss = self.criterion(pred_labels, labels)
-
-            loss = dsntnn.average_loss(l1_loss+js_reg, mask=labels)
-            loss += ce_loss
+            if self.detect:
+                #* If model set for detection only (no labelling)
+                pred_map, gt_map = torch.max(pred_heatmap, dim=1, keepdim=True), torch.max(heatmap, dim=1, keepdim=True)
+                ce_loss = self.criterion(pred_labels, labels) # Classifier
+                loss = cl.js_reg(pred_map.values, gt_map.values).mean() # MSE w/ heatmaps
+                loss += ce_loss
+            else:
+                #* Loss + Regularisation
+                l1_loss = torch.nn.functional.mse_loss(
+                    pred_coords, keypoints, reduction='none')
+                js_reg = cl.kl_reg(pred_heatmap, heatmap)
+                loss = dsntnn.average_loss(l1_loss+js_reg, mask=labels)
+                
+            
             self.writer.train_loss.append(loss.item())
             #* Optimiser step
             loss.backward()
             self.optimizer.step()
+
             if write2tensorboard:
                 # ** Write inputs to tensorboard
                 if epoch % writer_interval ==0  and idx == 0:
@@ -107,14 +114,20 @@ class Locator():
                                        keypoints, labels])
                     self.writer.plot_inputs(
                         f'Coronal Inputs at epoch {epoch}', cor_img)
-                    self.writer.plot_histogram(
-                        f'Target heatmap at epoch {epoch}', heatmap, targets=[None, labels])
+                    if self.detect:
+                        self.writer.plot_histogram(
+                            f'Target heatmap at epoch {epoch}', gt_map.values, 
+                            targets=[None, labels], detect=True)
+                    else:
+                        self.writer.plot_histogram(
+                            f'Target heatmap at epoch {epoch}', heatmap, 
+                            targets=[None, labels], detect=False)
             
         print('Train Loss:', np.mean(self.writer.train_loss))
         self.writer.add_scalar('Training Loss', np.mean(
             self.writer.train_loss), epoch)
             
-    def validation(self, epoch, write2tensorboard=True, writer_interval=10, write_gif=True):
+    def validation(self, epoch, write2tensorboard=True, writer_interval=10, write_gif=False):
         #~Validation loop
         with torch.set_grad_enabled(False):
             print('Validation...')
@@ -127,16 +140,24 @@ class Locator():
                     self.device, dtype=torch.float32), data['class_labels'].to(self.device, dtype=torch.float32)
                 pred_seg, pred_heatmap, pred_coords, pred_labels = self.model(
                     sag_img, cor_img)
-                #* Loss + Regularisation
-                l1_loss = torch.nn.functional.mse_loss(
-                    pred_coords, keypoints, reduction='none')
-                js_reg = cl.kl_reg(pred_heatmap, heatmap)
-                ce_loss = self.criterion(pred_labels, labels)
-                loss = dsntnn.average_loss(l1_loss+js_reg, mask=labels)
-                loss += ce_loss #* Combine detection + location
+                if self.detect:
+                    #* If model set for detection only (no labelling)
+                    pred_map, gt_map = torch.max(pred_heatmap, dim=1, keepdim=True), torch.max(heatmap, dim=1, keepdim=True)
+                    ce_loss = self.criterion(pred_labels, labels) # Classifier
+                    loss = cl.js_reg(pred_map.values, gt_map.values).mean() # MSE w/ heatmaps
+                    loss += ce_loss
+                else:
+                    #* Loss + Regularisation
+                    l1_loss = torch.nn.functional.mse_loss(
+                        pred_coords, keypoints, reduction='none')
+                    js_reg = cl.kl_reg(pred_heatmap, heatmap)
+                    loss = dsntnn.average_loss(l1_loss+js_reg, mask=labels)
+
+
                 self.writer.val_loss.append(loss.item())
-                self.writer.reg.append(js_reg[labels == 1].mean().item())
-                self.writer.l1.append(l1_loss[labels == 1].mean().item())
+                if not self.detect:
+                    self.writer.reg.append(js_reg[labels == 1].mean().item())
+                    self.writer.l1.append(l1_loss[labels == 1].mean().item())
                 self.writer.ce.append(ce_loss.item())
                 if write_gif:
                     if idx == 0:
@@ -147,12 +168,17 @@ class Locator():
                     if epoch % writer_interval == 0 and idx==0:
                         print('Predicted Labels + GT: ', pred_labels, labels)
                         self.writer.plot_prediction(f'Prediction at epoch {epoch}', img=sag_img, prediction=pred_coords, targets=[keypoints, labels])
-                        self.writer.plot_histogram(f'Predicted Heatmap at epoch {epoch}', pred_heatmap, targets=[heatmap, labels])
+                        if self.detect:
+                            self.writer.plot_histogram(f'Predicted Heatmap at epoch {epoch}', pred_map.values, targets=[heatmap, labels], detect=True)
+                        else:
+                            self.writer.plot_histogram(f'Predicted Heatmap at epoch {epoch}', pred_heatmap, targets=[heatmap, labels], detect=False)
             print('Validation Loss:', np.mean(self.writer.val_loss))
             self.scheduler.step(np.mean(self.writer.val_loss))
             self.writer.add_scalar('Validation Loss', np.mean(self.writer.val_loss), epoch)
-            self.writer.add_scalar('Regularisation', np.mean(self.writer.reg), epoch)
-            self.writer.add_scalar('L1-Loss', np.mean(self.writer.l1), epoch)
+            if not self.detect:
+                self.writer.add_scalar('Regularisation', np.mean(self.writer.reg), epoch)
+                self.writer.add_scalar('L1-Loss', np.mean(self.writer.l1), epoch)
+            self.writer.add_scalar('CE loss', np.mean(self.writer.ce), epoch)
 
     def inference(self, model_name='best_model.pt', plot_output=False):
         #~ Model Inference
@@ -176,18 +202,18 @@ class Locator():
                 ids = data['id']
 
                 #* Get predictions
-                pred_seg, pred_heatmap, pred_coords = self.model(sag_img, cor_img)
+                pred_seg, pred_heatmap, pred_coords, pred_labels = self.model(sag_img, cor_img)
                
                 if plot_output:
                     #* Plot predictions
                     #todo Add histograms + data for analysis
                     self.plot_predictions(ids, sag_img, pred_coords, targets=[keypoints, labels])
-                    self.plot_distribution(ids, pred_heatmap[..., 0], targets=[heatmap, labels])
-                    self.plot_heatmap(ids, pred_heatmap[..., 0], heatmap)
+                    self.plot_distribution(ids, pred_heatmap, targets=[heatmap, labels])
+                    self.plot_heatmap(ids, pred_heatmap, heatmap)
                 all_ids.append(ids)
                 all_pred_coords.append(pred_coords.cpu().numpy())
                 all_pred_heatmaps.append(pred_heatmap.cpu().numpy())
-                all_labels.append(labels.cpu().numpy())
+                all_labels.append(pred_labels.cpu().numpy())
 
         all_ids = np.concatenate(all_ids, axis=0)
         all_pred_coords = np.concatenate(all_pred_coords, axis=0)
