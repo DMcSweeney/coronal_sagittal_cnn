@@ -8,3 +8,5 @@ Improvement_epoch.txt
 .vscode/
 runs/
 logs/
+*.csv
+*.nii

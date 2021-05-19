@@ -72,7 +72,7 @@ def main():
 
     #!! TRAINING + VALIDATION
     model = tl.Locator(train_generator, valid_generator, test_generator, dir_name='exp1', num_epochs=200, detect=True)
-    model.forward(model_name='detection_test.pt')
+    #model.forward(model_name='detection_test_gamma.pt')
     #model.train(epoch=0)
     #model.validation(epoch=0)
     #model.inference(plot_output=True, model_name='w_classifier.pt')

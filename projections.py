@@ -10,6 +10,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 import csv
+import pandas as pd
+
+ordered_verts = ['T4', 'T5', 'T6', 'T7', 'T8', 'T9',
+                 'T10', 'T11', 'T12', 'L1', 'L2', 'L3', 'L4']
+
 
 def resample(image, new_spacing):
     """
@@ -128,14 +133,13 @@ def write_threeChannel(images, name, path, output_shape=(626, 452)):
         holder[..., i] = arr
     np.save(f'{path}{name}.npy', holder)
 
-
 #-------- MAIN -------------
-def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512)):
+def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), save_volumes=False):
     # Create lists for values that will be needed later for overlaying annotations
     scale_list = [] # List containing values by which each dimension was scaled when iso. resampling
     padding_list = [] # Values for x and y padding when centering image in output array
     name_list = [] # To keep track of names
-
+    points = pd.read_csv('./formatted_pts.csv', names=ordered_verts, header=0)
     for root, dir_, files in os.walk(data_dir):
         # Check if files in directory and only look for sagittal reformats
         if files and '_Sag' in root:
@@ -149,6 +153,10 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512)):
                     continue
                 split_path = root.split('/')
                 name = f'{split_path[-3]}_{split_path[-1]}'
+
+                if name != '01_06_2014_363_Sag':
+                    print('Skipping', name)
+                    continue
                 reader.SetFileNames(list(dcm_names))
                 print(f'Reading {name} - {len(dcm_names)} dcm files detected')
                 volume = reader.Execute()
@@ -157,6 +165,7 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512)):
                 # Paul's data needs rotating
                 data_block = sitk.GetArrayViewFromImage(volume)
                 data_block = np.rot90(np.flip(data_block, axis=0), k=3, axes=(0, 1))
+                
                 img = sitk.GetImageFromArray(data_block)
                 # SITK reorders dimensions so need to account for this when defining spacing
                 orig_spacing = list(volume.GetSpacing())
@@ -164,6 +173,7 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512)):
                 ordered_spacing = [orig_spacing[i] for i in new_order]
                 img.SetSpacing(ordered_spacing)
                 new_spacing = (min_pix, min_pix)
+                
                 # WL normalisation
                 bone_norm_img = WL_norm(img, window=1000, level=700)
                 tissue_norm_img = WL_norm(img, window=600, level=200)
@@ -183,6 +193,23 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512)):
                 name_list.append(name)
                 padding_list.append(tuple(padding))
                 scale_list.append(tuple(scale))
+                
+                if save_volumes:
+                    if f'{name}_kj' in points.index.to_list():
+                        new_spacing = (min_pix, min_pix, min_pix)
+                        print(img.GetSize())
+                        resampled_img, scaling = resample(img, new_spacing)
+                        resampled_data = sitk.GetArrayFromImage(resampled_img)
+                        print(resampled_data.shape)
+                        #get_midline(resampled_data, name, points)
+
+                        # ! Write CT volume to nii for easy use
+                        sitk.WriteImage(
+                            img, f'./ct_volumes/{name}.nii')
+                        break
+                    else:
+                        print("Can't find name in points df")
+                        continue
 
                 if plot:
                     print('Plotting projections')
@@ -196,13 +223,13 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512)):
         
             except RuntimeError:
                 continue
-    # Write info needed for annotations to csv file
-    with open(output_dir + 'annotation_info.csv', 'w') as f:
-        print('Writing CSV File')
-        wrt = csv.writer(f, dialect='excel')
-        wrt.writerow(['Name', 'Padding', 'Pixel Scaling'])
-        for name, pad, scale in zip(name_list, padding_list, scale_list):
-            wrt.writerow([name, pad, scale])
+    #Write info needed for annotations to csv file
+    # with open(output_dir + 'annotation_info.csv', 'w') as f:
+    #     print('Writing CSV File')
+    #     wrt = csv.writer(f, dialect='excel')
+    #     wrt.writerow(['Name', 'Padding', 'Pixel Scaling'])
+    #     for name, pad, scale in zip(name_list, padding_list, scale_list):
+    #         wrt.writerow([name, pad, scale])
 
 
 
@@ -211,4 +238,4 @@ output_dir = './images_coronal/'
 #output_dir ='./images_sagittal/'
 
 if __name__ == '__main__':
-    main(min_pix=4*0.3125, dim=0, plot=True, write=True)
+    main(min_pix=4*0.3125, dim=0, plot=False, write=False, save_volumes=True)

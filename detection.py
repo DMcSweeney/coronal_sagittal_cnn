@@ -76,10 +76,10 @@ def main():
     #!! TRAINING + VALIDATION
     model = Dtl.Detector(train_generator, valid_generator, test_generator, 
         dir_name='exp1', num_epochs=200, detect=True, n_outputs=13)
-    #model.forward(model_name='detection_focal.pt')
+    #model.forward(model_name='detection_focal_gamma1.pt')
     #model.train(epoch=0)
     #model.validation(epoch=0)
-    model.inference(plot_output=True, model_name='detection_focal.pt')
+    model.inference(plot_output=True, model_name='detection.pt')
     torch.cuda.empty_cache()
     
         

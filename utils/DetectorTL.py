@@ -85,7 +85,7 @@ class Detector():
         
             pred_seg, pred_class = self.model(sag_img)
             #* Loss + Regularisation
-            loss = binary_focal_loss_with_logits(input=pred_seg, target=mask, reduction='mean').cuda()
+            loss = binary_focal_loss_with_logits(input=pred_seg, target=mask, reduction='mean', gamma=1).cuda()
             #loss = self.criterion(pred_seg, mask)
             ce_loss = self.criterion(pred_class, labels)
             loss += ce_loss
@@ -116,7 +116,7 @@ class Detector():
                 
                 #* Loss 
                 val_loss = binary_focal_loss_with_logits(
-                    input=pred_seg, target=mask, reduction='mean').cuda()
+                    input=pred_seg, target=mask, reduction='mean', gamma=1).cuda()
                 
                 ce_loss = self.criterion(pred_class, labels)
                 val_loss += ce_loss
@@ -216,9 +216,19 @@ class Detector():
         ax.axis('off')
         for idx in np.arange(len(names)):
             arr = pred[idx].cpu().numpy()
-            arr = self.writer.sigmoid(arr)
-            ax.imshow(img[idx])
+            arr = self.sigmoid(arr)
+            img = np.moveaxis(img[idx].cpu().numpy(), 0, -1)
+            img = self.norm_img(img)
+            ax.imshow(img)
             ax.imshow(arr[idx], alpha=0.5)
             fig.savefig(self.output_path + f'masks/{names[idx]}.png')
             plt.clf()
         plt.close()
+
+    @staticmethod
+    def sigmoid(x):
+        return 1/(1+np.exp(-x))
+
+    @staticmethod
+    def norm_img(img):
+        return (img-img.min())/(img.max()-img.min())
