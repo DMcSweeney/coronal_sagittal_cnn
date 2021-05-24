@@ -17,17 +17,18 @@ seed = 66
 
 root_dir= 'data'
 heatmap_path = f'./{root_dir}/heatmaps/'
-mask_path = f'./{root_dir}/masks/'
+mask_path = f'./{root_dir}/cor_mid_mask/'
 coord_path = f'./{root_dir}/coordinates/'
 
 cor_slices_path = './images_coronal/all_projections/'
 sag_slices_path = './images_sagittal/all_projections/'
+#sag_slices_path = './images_sagittal/midline_composite/'
 
-
+out_root = 'midline_data'
 # output paths
-train_path = f'./{root_dir}/training/'
-test_path = f'./{root_dir}/testing/'
-val_path = f'./{root_dir}/validation/'
+train_path = f'./{out_root}/training/'
+test_path = f'./{out_root}/testing/'
+val_path = f'./{out_root}/validation/'
 
 #Train + (Test/Val)
 train_test_split = 0.7

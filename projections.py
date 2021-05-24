@@ -139,6 +139,7 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), 
     scale_list = [] # List containing values by which each dimension was scaled when iso. resampling
     padding_list = [] # Values for x and y padding when centering image in output array
     name_list = [] # To keep track of names
+    direction_list = [] # To keep track of orientation of initial volume
     points = pd.read_csv('./formatted_pts.csv', names=ordered_verts, header=0)
     for root, dir_, files in os.walk(data_dir):
         # Check if files in directory and only look for sagittal reformats
@@ -154,12 +155,15 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), 
                 split_path = root.split('/')
                 name = f'{split_path[-3]}_{split_path[-1]}'
 
-                if name != '01_06_2014_363_Sag':
-                    print('Skipping', name)
-                    continue
+                # if name != '01_06_2014_363_Sag':
+                #     print('Skipping', name)
+                #     continue
+
                 reader.SetFileNames(list(dcm_names))
                 print(f'Reading {name} - {len(dcm_names)} dcm files detected')
                 volume = reader.Execute()
+                direction_list.append(volume.GetDirection())
+                print(volume.GetDirection())
                 if min_pix is None:
                     min_pix = min(img.GetSpacing())
                 # Paul's data needs rotating
@@ -197,16 +201,13 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), 
                 if save_volumes:
                     if f'{name}_kj' in points.index.to_list():
                         new_spacing = (min_pix, min_pix, min_pix)
-                        print(img.GetSize())
-                        resampled_img, scaling = resample(img, new_spacing)
-                        resampled_data = sitk.GetArrayFromImage(resampled_img)
-                        print(resampled_data.shape)
+                        # resampled_img, scaling = resample(img, new_spacing)
+                        # resampled_data = sitk.GetArrayFromImage(resampled_img)
                         #get_midline(resampled_data, name, points)
-
                         # ! Write CT volume to nii for easy use
                         sitk.WriteImage(
                             img, f'./ct_volumes/{name}.nii')
-                        break
+                        #break
                     else:
                         print("Can't find name in points df")
                         continue
@@ -223,6 +224,14 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), 
         
             except RuntimeError:
                 continue
+
+    with open('./dicom_direction.csv', 'w') as f:
+        print('Writing directions to CSV')
+        wrt = csv.writer(f, dialect='excel')
+        wrt.writerow(['Name', 'Direction'])
+        for name, direction in zip(name_list, direction_list):
+            wrt.writerow([name, direction])
+
     #Write info needed for annotations to csv file
     # with open(output_dir + 'annotation_info.csv', 'w') as f:
     #     print('Writing CSV File')

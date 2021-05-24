@@ -13,7 +13,6 @@ import albumentations as A
 from albumentations.pytorch.transforms import ToTensor
 import segmentation_models_pytorch as smp
 
-import utils.LocatorTL as Ltl
 import utils.DetectorTL as Dtl
 from utils.customDataset_v2 import spineDataset
 
@@ -34,8 +33,8 @@ def main():
     #~Pre-processing + training 
     # ** Create albumentation transforms - train + val + test
     train_transforms = A.Compose([A.HorizontalFlip(p=0.5),
-            A.ShiftScaleRotate(scale_limit=0.2, rotate_limit=0,
-                                  shift_limit=0, p=1, border_mode=0),
+            A.ShiftScaleRotate(scale_limit=0.2, rotate_limit=15,
+                                  shift_limit=0.1, p=1, border_mode=0),
             #A.GaussNoise(var_limit=0.025, p=0.5, per_channel=False),
             #A.Perspective(p=0.5),
             A.RandomCrop(height=342, width=512, p=0.5),
@@ -76,10 +75,10 @@ def main():
     #!! TRAINING + VALIDATION
     model = Dtl.Detector(train_generator, valid_generator, test_generator, 
         dir_name='exp1', num_epochs=200, detect=True, n_outputs=13)
-    #model.forward(model_name='detection_focal_gamma1.pt')
+    #model.forward(model_name='detection_sag_midline_WL.pt')
     #model.train(epoch=0)
     #model.validation(epoch=0)
-    model.inference(plot_output=True, model_name='detection.pt')
+    model.inference(plot_output=True, model_name='detection_sag_midline_WL.pt')
     torch.cuda.empty_cache()
     
         
