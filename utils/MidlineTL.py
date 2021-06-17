@@ -17,6 +17,7 @@ from torch.optim import Adam
 from torchsummary import summary
 import torch.nn as nn
 import torch
+import torch.optim.swa_utils as swa
 import dsntnn
 from tqdm import tqdm
 from scipy.ndimage import zoom
@@ -24,6 +25,7 @@ import matplotlib.pyplot as plt
 import os
 import numpy as np
 import matplotlib
+
 matplotlib.use('Agg')
 
 
@@ -43,6 +45,11 @@ class Midline():
         self.test_dataLoader = test_dataLoader
         self.model = cm2.customUNet(n_outputs=n_outputs).cuda()
         self.optimizer = Adam(self.model.parameters(), lr=learning_rate)
+        #* Stochastic Weight Averaging (https://pytorch.org/docs/stable/optim.html#putting-it-all-together)
+        self.swa_model = swa.AveragedModel(self.model)
+        self.swa_scheduler = swa.SWALR(self.optimizer, swa_lr=0.05) # LR set to large value
+        self.swa_start = 100 # START EPOCH from SWA
+
         self.criterion = nn.BCEWithLogitsLoss().cuda()
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, mode='min', verbose=True)
@@ -66,6 +73,15 @@ class Midline():
             #* Save best model
             self.save_best_model(model_name=model_name)
 
+        #* Update batch norm stats. for SWA model 
+        print('Updating batch norm stats')
+        for data in tqdm(self.train_dataLoader):
+            img = data['cor_image'].to(self.device, dtype=torch.float32)
+            self.swa_model(img)
+        print('Saving best model')
+        torch.save(self.swa_model.state_dict(),
+                   self.output_path + f"{model_name.split('.')[0]}_SWA.pt")
+
     def train(self, epoch, write2tensorboard=True, writer_interval=20, viz_model=False):
         #~Main training loop
         #@param:
@@ -80,13 +96,13 @@ class Midline():
         # ** Training Loop **
         for idx, data in enumerate(tqdm(self.train_dataLoader)):
             #*Load data
-            sag_img = data['cor_image'].to(self.device, dtype=torch.float32)
+            img = data['cor_image'].to(self.device, dtype=torch.float32)
             mask = data['mask'].to(self.device, dtype=torch.float32)
             keypoints, labels = data['keypoints'].to(
                 self.device, dtype=torch.float32), data['class_labels'].to(self.device, dtype=torch.float32)
             self.optimizer.zero_grad()  # Reset gradients
 
-            pred_seg, pred_class = self.model(sag_img)
+            pred_seg, pred_class = self.model(img)
             #* Loss + Regularisation
             #loss = binary_focal_loss_with_logits(input=pred_seg, target=mask, reduction='mean', gamma=1).cuda()
             loss = self.criterion(pred_seg, mask)
@@ -99,10 +115,10 @@ class Midline():
             if write2tensorboard:
                 # ** Write inputs to tensorboard
                 if epoch % writer_interval == 0 and idx == 0:
-                    self.writer.plot_inputs(f'Sagittal Inputs at epoch {epoch}', sag_img, targets=[
+                    self.writer.plot_inputs(f'Sagittal Inputs at epoch {epoch}', img, targets=[
                         keypoints, labels])
                     self.writer.plot_mask(
-                        f'Ground-truth at epoch {epoch}', img=sag_img, prediction=mask)
+                        f'Ground-truth at epoch {epoch}', img=img, prediction=mask)
 
         print('Train Loss:', np.mean(self.writer.train_loss))
         self.writer.add_scalar('Training Loss', np.mean(
@@ -114,12 +130,12 @@ class Midline():
             print('Validation...')
             for idx, data in enumerate(tqdm(self.val_dataLoader)):
                 #* Load data
-                sag_img = data['cor_image'].to(
+                img = data['cor_image'].to(
                     self.device, dtype=torch.float32)
                 mask = data['mask'].to(self.device, dtype=torch.float32)
                 keypoints, labels = data['keypoints'].to(
                     self.device, dtype=torch.float32), data['class_labels'].to(self.device, dtype=torch.float32)
-                pred_seg, pred_class = self.model(sag_img)
+                pred_seg, pred_class = self.model(img)
 
                 #* Loss
                 # val_loss = binary_focal_loss_with_logits(
@@ -137,9 +153,15 @@ class Midline():
                         print('Predicted Labels + GT: ',
                               self.writer.sigmoid(pred_class), labels)
                         self.writer.plot_mask(
-                            f'Predicted mask at epoch {epoch}', img=sag_img, prediction=pred_seg)
+                            f'Predicted mask at epoch {epoch}', img=img, prediction=pred_seg)
             print('Validation Loss:', np.mean(self.writer.val_loss))
-            self.scheduler.step(np.mean(self.writer.val_loss))
+            if epoch > self.swa_start:
+                self.swa_model.update_parameters(self.model)
+                self.swa_scheduler.step()
+            else:
+                self.scheduler.step(np.mean(self.writer.val_loss))
+
+
             self.writer.add_scalar(
                 'Validation Loss', np.mean(self.writer.val_loss), epoch)
             self.writer.add_scalar('CE loss', np.mean(self.writer.ce), epoch)
@@ -156,12 +178,12 @@ class Midline():
         with torch.set_grad_enabled(False):
             for idx, data in enumerate(tqdm(self.test_dataLoader)):
                 #* Load data
-                sag_img = data['cor_image'].to(
+                img = data['cor_image'].to(
                     self.device, dtype=torch.float32)
                 ids = data['id']
 
                 #* Get predictions
-                pred_seg, pred_class = self.model(sag_img)
+                pred_seg, pred_class = self.model(img)
 
                 if plot_output:
                     #* Plot predictions

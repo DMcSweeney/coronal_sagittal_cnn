@@ -74,11 +74,11 @@ def main():
 
     #!! TRAINING + VALIDATION
     model = Mtl.Midline(train_generator, valid_generator, test_generator,
-                         dir_name='exp1', num_epochs=200, detect=True, n_outputs=13)
-    #model.forward(model_name='midline_finder.pt')
+                         dir_name='exp1', detect=True, n_outputs=13)
+    model.forward(model_name='midline_finder.pt', num_epochs=300)
     #model.train(epoch=0)
     #model.validation(epoch=0)
-    model.inference(plot_output=True, model_name='midline_finder.pt')
+    #model.inference(plot_output=True, model_name='midline_finder.pt')
     torch.cuda.empty_cache()
 
 

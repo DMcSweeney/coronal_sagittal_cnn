@@ -11,6 +11,8 @@ import numpy as np
 from PIL import Image
 import csv
 import pandas as pd
+import pydicom as pyd
+import nibabel as nib
 
 ordered_verts = ['T4', 'T5', 'T6', 'T7', 'T8', 'T9',
                  'T10', 'T11', 'T12', 'L1', 'L2', 'L3', 'L4']
@@ -133,6 +135,28 @@ def write_threeChannel(images, name, path, output_shape=(626, 452)):
         holder[..., i] = arr
     np.save(f'{path}{name}.npy', holder)
 
+def dcm_orientation(file):
+    #* Read dcm files and check meta
+    #* Determine which dcm series are being read in wrong order 
+    reader = sitk.ImageFileReader()
+    reader.SetFileName(file)
+    reader.LoadPrivateTagsOn()
+    reader.ReadImageInformation()
+    k = '0020|0032'
+    img_pos = reader.GetMetaData(k)
+    x, y, z = (float(x) for x in img_pos.split("\\"))
+    return x
+
+def vxl_read_dicom(filenames):
+    #* List of filenames, sorted in increasing slice number (as vxl does)
+    holder = []
+    for file in filenames:
+        reader = sitk.ImageFileReader()
+        reader.SetFileName(file)
+        img = reader.Execute()
+        holder.append(sitk.GetArrayFromImage(img))
+    return np.array(holder)
+
 #-------- MAIN -------------
 def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), save_volumes=False):
     # Create lists for values that will be needed later for overlaying annotations
@@ -140,39 +164,54 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), 
     padding_list = [] # Values for x and y padding when centering image in output array
     name_list = [] # To keep track of names
     direction_list = [] # To keep track of orientation of initial volume
-    points = pd.read_csv('./formatted_pts.csv', names=ordered_verts, header=0)
+    origin_list = [] # Keep track of original origin
+    points = pd.read_csv('./formatted_pts.csv', index_col=0, header=0)
+
+    flipped_list = [] #* For collecting images that were flipped left/right
     for root, dir_, files in os.walk(data_dir):
         # Check if files in directory and only look for sagittal reformats
         if files and '_Sag' in root:
             try:
+                split_path = root.split('/')
+                name = f'{split_path[-3]}_{split_path[-1]}'
+                if f'{name}_kj' not in points.index.to_list():
+                    continue
                 reader = sitk.ImageSeriesReader()
                 dcm_paths = reader.GetGDCMSeriesFileNames(root)
                 # Remove tester slice
-                dcm_names = [path for path in dcm_paths if not path.endswith('00001.dcm')]
+                dcm_names = sorted([path for path in dcm_paths if not path.endswith('00001.dcm')])
                 if len(dcm_names) == 0:
                     print('No Dicom files found, skipping directory')
                     continue
-                split_path = root.split('/')
-                name = f'{split_path[-3]}_{split_path[-1]}'
-
-                # if name != '01_06_2014_363_Sag':
-                #     print('Skipping', name)
-                #     continue
-
-                reader.SetFileNames(list(dcm_names))
+                
+                volume = vxl_read_dicom(dcm_names)
+                print(volume.shape)
+                
+                reader.SetFileNames(dcm_names)
                 print(f'Reading {name} - {len(dcm_names)} dcm files detected')
-                volume = reader.Execute()
-                direction_list.append(volume.GetDirection())
-                print(volume.GetDirection())
+                #! Get Pixel spacing from 3D volume but read slice by slice (to match VXL)
+                
+                meta = reader.Execute()
+                direction_list.append(meta.GetDirection())
+                origin_list.append(meta.GetOrigin())
+                print(meta.GetOrigin())
+                print(volume.shape)
+                out_img = sitk.GetImageFromArray(np.squeeze(volume))
+                out_img.SetSpacing(meta.GetSpacing())
+                out_img.SetOrigin(meta.GetOrigin())
+                out_img.SetDirection(meta.GetDirection())
+                print(out_img.GetSize())
+
                 if min_pix is None:
-                    min_pix = min(img.GetSpacing())
+                    min_pix = min(meta.GetSpacing())
                 # Paul's data needs rotating
-                data_block = sitk.GetArrayViewFromImage(volume)
+                
+                data_block = sitk.GetArrayViewFromImage(meta)
                 data_block = np.rot90(np.flip(data_block, axis=0), k=3, axes=(0, 1))
                 
                 img = sitk.GetImageFromArray(data_block)
                 # SITK reorders dimensions so need to account for this when defining spacing
-                orig_spacing = list(volume.GetSpacing())
+                orig_spacing = list(meta.GetSpacing())
                 new_order = [0, 2, 1]
                 ordered_spacing = [orig_spacing[i] for i in new_order]
                 img.SetSpacing(ordered_spacing)
@@ -193,24 +232,24 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), 
                 padded_mip, scale, padding = post_projection(mip[0], new_spacing, output_shape)
                 padded_avg, _,  _ = post_projection(avg[0], new_spacing, output_shape)
                 padded_std, _, _ = post_projection(std[0], new_spacing, output_shape)
-
+                
                 name_list.append(name)
                 padding_list.append(tuple(padding))
                 scale_list.append(tuple(scale))
                 
                 if save_volumes:
-                    if f'{name}_kj' in points.index.to_list():
-                        new_spacing = (min_pix, min_pix, min_pix)
-                        # resampled_img, scaling = resample(img, new_spacing)
-                        # resampled_data = sitk.GetArrayFromImage(resampled_img)
-                        #get_midline(resampled_data, name, points)
-                        # ! Write CT volume to nii for easy use
-                        sitk.WriteImage(
-                            img, f'./ct_volumes/{name}.nii')
-                        #break
-                    else:
-                        print("Can't find name in points df")
-                        continue
+                    new_spacing = (min_pix, min_pix, min_pix)
+                    # resampled_img, scaling = resample(img, new_spacing)
+                    # resampled_data = sitk.GetArrayFromImage(resampled_img)
+                    #get_midline(resampled_data, name, points)
+                    # ! Write CT volume to nii for easy use
+                    print(out_img.GetSize(), out_img.GetSpacing(), out_img.GetDirection())
+                    sitk.WriteImage(
+                        out_img, f'./ct_volumes/{name}.nii')
+                    
+                else:
+                    print("Can't find name in points df")
+                    continue
 
                 if plot:
                     print('Plotting projections')
@@ -225,13 +264,16 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), 
             except RuntimeError:
                 continue
 
-    with open('./dicom_direction.csv', 'w') as f:
-        print('Writing directions to CSV')
-        wrt = csv.writer(f, dialect='excel')
-        wrt.writerow(['Name', 'Direction'])
-        for name, direction in zip(name_list, direction_list):
-            wrt.writerow([name, direction])
+    # with open('./dicom_direction.csv', 'w') as f:
+    #     print('Writing directions to CSV')
+    #     wrt = csv.writer(f, dialect='excel')
+    #     wrt.writerow(['Name', 'Direction', 'Origin'])
+    #     for name, direction, origin in zip(name_list, direction_list, origin_list):
+    #         wrt.writerow([name, direction, origin])
 
+    with open('./flipped_dcm.txt', 'w') as f:
+        for name in flipped_list:
+            f.write(name + '\n')
     #Write info needed for annotations to csv file
     # with open(output_dir + 'annotation_info.csv', 'w') as f:
     #     print('Writing CSV File')

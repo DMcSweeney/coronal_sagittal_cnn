@@ -20,7 +20,7 @@ heatmap_path = f'./{root_dir}/heatmaps/'
 mask_path = f'./{root_dir}/cor_mid_mask/'
 coord_path = f'./{root_dir}/coordinates/'
 
-cor_slices_path = './images_coronal/all_projections/'
+cor_slices_path = f'./{root_dir}/coronal_mips/'
 sag_slices_path = './images_sagittal/all_projections/'
 #sag_slices_path = './images_sagittal/midline_composite/'
 
