@@ -11,8 +11,8 @@ import numpy as np
 from PIL import Image
 import csv
 import pandas as pd
-import pydicom as pyd
-import nibabel as nib
+from einops import rearrange
+from itertools import groupby
 
 ordered_verts = ['T4', 'T5', 'T6', 'T7', 'T8', 'T9',
                  'T10', 'T11', 'T12', 'L1', 'L2', 'L3', 'L4']
@@ -46,11 +46,7 @@ def WL_norm(img, window=1000, level=700):
     wl = sitk.IntensityWindowingImageFilter()
     wl.SetWindowMaximum(maxval)
     wl.SetWindowMinimum(minval)
-    print(sitk.GetArrayFromImage(img).max())
     out = wl.Execute(img)
-    # out -= minval
-    # out /= window
-    print(sitk.GetArrayFromImage(out).max())
     return out
 
 def maximum_projection(img, dim=0):
@@ -113,14 +109,17 @@ def post_projection(img, new_spacing, output_shape=(626, 452)):
         return img, (1, 1), (0, 0)
 
 def plot_projection(img, name, path):
-    
+    #! Transpose needed to plot them in correct orient.
     fig, ax = plt.subplots(1, 1, figsize=(10, 10))
     ax.axis('off')
     arr = sitk.GetArrayFromImage(img)
-    print(path, arr.max(), arr.min())
-    im = Image.fromarray(arr.astype(np.uint8))
+    if 'coronal' in path:
+        im = Image.fromarray(arr.astype(np.uint8).T)
+    elif 'sagittal' in path:
+        im = Image.fromarray(arr.astype(np.uint8))
+    else:
+        raise ValueError
     im.save(f'{path}{name}.png')
-    #im.save('test.png')
     plt.close()
 
 def write_threeChannel(images, name, path, output_shape=(626, 452)):
@@ -132,7 +131,12 @@ def write_threeChannel(images, name, path, output_shape=(626, 452)):
     for i, img in enumerate(images):
         arr = sitk.GetArrayFromImage(img).astype(np.float)
         arr /= 255 # Normalise to [0, 1]
-        holder[..., i] = arr
+        if 'coronal' in path:
+            holder[..., i] = arr.T
+        elif 'sagittal' in path:
+            holder[..., i] = arr
+        else:
+            raise ValueError
     np.save(f'{path}{name}.npy', holder)
 
 def dcm_orientation(file):
@@ -147,15 +151,28 @@ def dcm_orientation(file):
     x, y, z = (float(x) for x in img_pos.split("\\"))
     return x
 
+
+def all_equal(iterable):
+    #* Check all elems of list are equal
+    g = groupby(iterable)
+    return next(g, True) and not next(g, False)
+
 def vxl_read_dicom(filenames):
     #* List of filenames, sorted in increasing slice number (as vxl does)
     holder = []
+    slice_thickness = []
     for file in filenames:
         reader = sitk.ImageFileReader()
         reader.SetFileName(file)
+        reader.LoadPrivateTagsOn()
+        reader.ReadImageInformation()
+        k = '0018|0050'  # Slice thickness
+        thickness = reader.GetMetaData(k)
+        slice_thickness.append(thickness)
         img = reader.Execute()
         holder.append(sitk.GetArrayFromImage(img))
-    return np.array(holder)
+    assert all_equal(slice_thickness), 'Mismatch slice thickness'
+    return np.array(holder), slice_thickness
 
 #-------- MAIN -------------
 def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), save_volumes=False):
@@ -165,9 +182,11 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), 
     name_list = [] # To keep track of names
     direction_list = [] # To keep track of orientation of initial volume
     origin_list = [] # Keep track of original origin
+    orig_pix = [] # Record origin pixel size for coronal annotations 
+    orig_thickness = [] #Keep track of slice thickness tag as VXL uses this instead of slice spacing 
+    num_slices = [] #Keep track of number of slices to fix issues with slice thickness.
     points = pd.read_csv('./formatted_pts.csv', index_col=0, header=0)
 
-    flipped_list = [] #* For collecting images that were flipped left/right
     for root, dir_, files in os.walk(data_dir):
         # Check if files in directory and only look for sagittal reformats
         if files and '_Sag' in root:
@@ -184,7 +203,7 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), 
                     print('No Dicom files found, skipping directory')
                     continue
                 
-                volume = vxl_read_dicom(dcm_names)
+                volume, slice_thickness = vxl_read_dicom(dcm_names)
                 print(volume.shape)
                 
                 reader.SetFileNames(dcm_names)
@@ -194,76 +213,83 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), 
                 meta = reader.Execute()
                 direction_list.append(meta.GetDirection())
                 origin_list.append(meta.GetOrigin())
-                print(meta.GetOrigin())
                 print(volume.shape)
                 out_img = sitk.GetImageFromArray(np.squeeze(volume))
                 out_img.SetSpacing(meta.GetSpacing())
                 out_img.SetOrigin(meta.GetOrigin())
                 out_img.SetDirection(meta.GetDirection())
                 print(out_img.GetSize())
-
                 if min_pix is None:
                     min_pix = min(meta.GetSpacing())
                 # Paul's data needs rotating
                 
-                data_block = sitk.GetArrayViewFromImage(meta)
-                data_block = np.rot90(np.flip(data_block, axis=0), k=3, axes=(0, 1))
+                # data_block = sitk.GetArrayViewFromImage(meta)
+                # data_block = np.rot90(np.flip(data_block, axis=0), k=3, axes=(0, 1))
                 
-                img = sitk.GetImageFromArray(data_block)
+                # img = sitk.GetImageFromArray(data_block)
                 # SITK reorders dimensions so need to account for this when defining spacing
-                orig_spacing = list(meta.GetSpacing())
-                new_order = [0, 2, 1]
-                ordered_spacing = [orig_spacing[i] for i in new_order]
-                img.SetSpacing(ordered_spacing)
+                # orig_spacing = list(out_img.GetSpacing())
+                # print(orig_spacing, out_img.GetSize())
+                # ordered_spacing = orig_spacing[[0, 2, 1]]
+                # out_img.SetSpacing(ordered_spacing)
                 new_spacing = (min_pix, min_pix)
                 
                 # WL normalisation
-                bone_norm_img = WL_norm(img, window=1000, level=700)
-                tissue_norm_img = WL_norm(img, window=600, level=200)
+                bone_norm_img = WL_norm(out_img, window=1000, level=700)
+                tissue_norm_img = WL_norm(out_img, window=600, level=200)
 
-                print(img.GetSize(), img.GetSpacing())
                 # Projections
                 mip = maximum_projection(bone_norm_img, dim=dim)
                 avg = average_projection(tissue_norm_img, dim=dim)
                 avg = normalize(avg)
                 std = standard_deviation(tissue_norm_img, dim=dim)
                 std = normalize(std)
+                print(mip.GetSize())
                 # Resample projections to isotropic voxel size
-                padded_mip, scale, padding = post_projection(mip[0], new_spacing, output_shape)
-                padded_avg, _,  _ = post_projection(avg[0], new_spacing, output_shape)
-                padded_std, _, _ = post_projection(std[0], new_spacing, output_shape)
-                
+                if 'coronal' in output_dir:
+                    padded_mip, scale, padding = post_projection(mip[0], new_spacing, output_shape)
+                    padded_avg, _,  _ = post_projection(avg[0], new_spacing, output_shape)
+                    padded_std, _, _ = post_projection(std[0], new_spacing, output_shape)
+                elif 'sagittal' in output_dir:
+                    padded_mip, scale, padding = post_projection(
+                        mip[:,:,  0], new_spacing, output_shape)
+                    padded_avg, _,  _ = post_projection(
+                        avg[:,:, 0], new_spacing, output_shape)
+                    padded_std, _, _ = post_projection(
+                        std[:,:, 0], new_spacing, output_shape)
+                else:
+                    raise ValueError
+
+
                 name_list.append(name)
                 padding_list.append(tuple(padding))
                 scale_list.append(tuple(scale))
-                
+                orig_pix.append(out_img.GetSpacing())
+                orig_thickness.append(slice_thickness[0])
+                num_slices.append(len(dcm_names))
                 if save_volumes:
+                    #* Write volume to .nii for easier use in notebooks
                     new_spacing = (min_pix, min_pix, min_pix)
-                    # resampled_img, scaling = resample(img, new_spacing)
-                    # resampled_data = sitk.GetArrayFromImage(resampled_img)
-                    #get_midline(resampled_data, name, points)
-                    # ! Write CT volume to nii for easy use
+                    
                     print(out_img.GetSize(), out_img.GetSpacing(), out_img.GetDirection())
                     sitk.WriteImage(
                         out_img, f'./ct_volumes/{name}.nii')
-                    
-                else:
-                    print("Can't find name in points df")
-                    continue
 
                 if plot:
+                    #* Sanity check plots
                     print('Plotting projections')
-                    plot_projection(padded_mip, name, output_dir + 'mip/')
+                    plot_projection(padded_mip, name, output_dir + 'mip/') 
                     plot_projection(padded_avg, name, output_dir + 'avg/')
                     plot_projection(padded_std, name, output_dir + 'std/')
                 if write:
+                    #* Write all projections to numpy (inputs to models)
                     print('Writing projections to npy')
                     images = (padded_mip, padded_avg, padded_std)
                     write_threeChannel(images, name, output_dir + 'all_projections/', output_shape)
+                    
         
             except RuntimeError:
                 continue
-
     # with open('./dicom_direction.csv', 'w') as f:
     #     print('Writing directions to CSV')
     #     wrt = csv.writer(f, dialect='excel')
@@ -271,22 +297,19 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), 
     #     for name, direction, origin in zip(name_list, direction_list, origin_list):
     #         wrt.writerow([name, direction, origin])
 
-    with open('./flipped_dcm.txt', 'w') as f:
-        for name in flipped_list:
-            f.write(name + '\n')
     #Write info needed for annotations to csv file
-    # with open(output_dir + 'annotation_info.csv', 'w') as f:
-    #     print('Writing CSV File')
-    #     wrt = csv.writer(f, dialect='excel')
-    #     wrt.writerow(['Name', 'Padding', 'Pixel Scaling'])
-    #     for name, pad, scale in zip(name_list, padding_list, scale_list):
-    #         wrt.writerow([name, pad, scale])
+    with open(output_dir + 'annotation_info.csv', 'w') as f:
+        print('Writing CSV File')
+        wrt = csv.writer(f, dialect='excel')
+        wrt.writerow(['Name', 'Padding', 'Pixel Scaling', 'Orig. Pix', 'Slice Thickness', 'Num Slices'])
+        for name, pad, scale, pix, thick, num in zip(name_list, padding_list, scale_list, orig_pix, orig_thickness, num_slices):
+            wrt.writerow([name, pad, scale, pix, thick, num])
 
 
 
 data_dir = '/home/donal/CT_volumes/images/'
-output_dir = './images_coronal/'
-#output_dir ='./images_sagittal/'
+output_dir = './images_coronal/' #! Set dim =0 
+#output_dir ='./images_sagittal/' #! Set dim = 2
 
 if __name__ == '__main__':
-    main(min_pix=4*0.3125, dim=0, plot=False, write=False, save_volumes=True)
+    main(min_pix=4*0.3125, dim=0, plot=False, write=False, save_volumes=False)

@@ -7,11 +7,10 @@ import torch
 from torch.utils.data import DataLoader
 
 import albumentations as A
-from albumentations.pytorch.transforms import ToTensor
 import segmentation_models_pytorch as smp
 
 import utils.MidlineTL as Mtl
-from utils.customDataset_v2 import spineDataset
+from utils.customDataset_v2 import midlineDataset
 
 torch.autograd.set_detect_anomaly(True)
 # *Declare Paths + variables
@@ -26,7 +25,6 @@ num_epochs = 200
 ENCODER = 'resnet34'
 ENCODER_WEIGHTS = 'imagenet'
 
-
 def main():
     #~Pre-processing + training
     # ** Create albumentation transforms - train + val + test
@@ -35,37 +33,28 @@ def main():
                                   shift_limit=0.1, p=1, border_mode=0),
                                   #A.GaussNoise(var_limit=0.025, p=0.5, per_channel=False),
                                   #A.Perspective(p=0.5),
-                                  A.RandomCrop(height=342, width=512, p=0.5),
+                                  A.RandomCrop(height=256, width=512, p=0.5),
                                   A.Resize(height=512, width=512)
-                                  ],
-                                 keypoint_params=A.KeypointParams(format=('yx'), label_fields=[
-                                     'class_labels'], remove_invisible=False),
-                                 additional_targets={'image1': 'image', 'mask1': 'mask'})
+                                  ],)
 
-    valid_transforms = A.Compose([A.Resize(height=512, width=512)],
-                                 keypoint_params=A.KeypointParams(
-                                     format='yx', remove_invisible=True, label_fields=['class_labels']),
-                                 additional_targets={'image1': 'image', 'mask1': 'mask'})
+    valid_transforms = A.Compose([A.Resize(height=512, width=512)],)
 
-    test_transforms = A.Compose([A.Resize(height=512, width=512)],
-                                keypoint_params=A.KeypointParams(
-                                    format='yx', remove_invisible=True, label_fields=['class_labels']),
-                                additional_targets={'image1': 'image', 'mask1': 'mask'})
+    test_transforms = A.Compose([A.Resize(height=512, width=512)],)
 
     #** Pre-processing functions
     pre_processing_fn = smp.encoders.get_preprocessing_fn(
         ENCODER, ENCODER_WEIGHTS)
 
     # ** Create Dataset for training
-    train_dataset = spineDataset(
+    train_dataset = midlineDataset(
         train_path, pre_processing_fn=pre_processing_fn,
-        transforms=train_transforms, normalise=True, detect=True) #@ detect:True returns mask 
-    valid_dataset = spineDataset(
+        transforms=train_transforms, normalise=True) 
+    valid_dataset = midlineDataset(
         valid_path, pre_processing_fn=pre_processing_fn,
-        transforms=valid_transforms, normalise=True, detect=True)
-    test_dataset = spineDataset(
+        transforms=valid_transforms, normalise=True)
+    test_dataset = midlineDataset(
         test_path, pre_processing_fn=pre_processing_fn,
-        transforms=test_transforms, normalise=True, detect=True)
+        transforms=test_transforms, normalise=True)
 
     # ** Convert to Dataloaders
     train_generator = DataLoader(train_dataset, batch_size=batch_size)

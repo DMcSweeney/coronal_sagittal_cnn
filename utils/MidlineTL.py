@@ -31,7 +31,7 @@ matplotlib.use('Agg')
 
 class Midline():
     """
-    ~Class for training m,idline detector from coronal projections
+    ~Class for training midline detector from coronal projections
     @params: 
       dir_name = directory name used for splitting tensorboard runs.   
     """
@@ -43,7 +43,7 @@ class Midline():
         self.train_dataLoader = train_dataLoader
         self.val_dataLoader = val_dataLoader
         self.test_dataLoader = test_dataLoader
-        self.model = cm2.customUNet(n_outputs=n_outputs).cuda()
+        self.model = cm2.customUNet(n_outputs=n_outputs, classifier=False).cuda()
         self.optimizer = Adam(self.model.parameters(), lr=learning_rate)
         #* Stochastic Weight Averaging (https://pytorch.org/docs/stable/optim.html#putting-it-all-together)
         self.swa_model = swa.AveragedModel(self.model)
@@ -59,6 +59,14 @@ class Midline():
         self.best_loss = 10000  # Initialise loss for saving best model
         self.output_path = output_path
 
+    @staticmethod
+    def sigmoid(x):
+        return 1/(1+np.exp(-x))
+
+    @staticmethod
+    def norm_img(img):
+        return (img-img.min())/(img.max()-img.min())
+        
     def forward(self, num_epochs=200, model_name='best_model.pt'):
 
         #~ Forward pass def
@@ -98,16 +106,11 @@ class Midline():
             #*Load data
             img = data['cor_image'].to(self.device, dtype=torch.float32)
             mask = data['mask'].to(self.device, dtype=torch.float32)
-            keypoints, labels = data['keypoints'].to(
-                self.device, dtype=torch.float32), data['class_labels'].to(self.device, dtype=torch.float32)
             self.optimizer.zero_grad()  # Reset gradients
 
-            pred_seg, pred_class = self.model(img)
+            pred_seg = self.model(img)
             #* Loss + Regularisation
-            #loss = binary_focal_loss_with_logits(input=pred_seg, target=mask, reduction='mean', gamma=1).cuda()
             loss = self.criterion(pred_seg, mask)
-            ce_loss = self.criterion(pred_class, labels)
-            loss += ce_loss
             self.writer.train_loss.append(loss.item())
             #* Optimiser step
             loss.backward()
@@ -115,10 +118,8 @@ class Midline():
             if write2tensorboard:
                 # ** Write inputs to tensorboard
                 if epoch % writer_interval == 0 and idx == 0:
-                    self.writer.plot_inputs(f'Sagittal Inputs at epoch {epoch}', img, targets=[
-                        keypoints, labels])
                     self.writer.plot_mask(
-                        f'Ground-truth at epoch {epoch}', img=img, prediction=mask)
+                        f'Ground-truth', img=img, prediction=mask)
 
         print('Train Loss:', np.mean(self.writer.train_loss))
         self.writer.add_scalar('Training Loss', np.mean(
@@ -133,27 +134,17 @@ class Midline():
                 img = data['cor_image'].to(
                     self.device, dtype=torch.float32)
                 mask = data['mask'].to(self.device, dtype=torch.float32)
-                keypoints, labels = data['keypoints'].to(
-                    self.device, dtype=torch.float32), data['class_labels'].to(self.device, dtype=torch.float32)
-                pred_seg, pred_class = self.model(img)
+                pred_seg= self.model(img)
 
                 #* Loss
-                # val_loss = binary_focal_loss_with_logits(
-                #     input=pred_seg, target=mask, reduction='mean', gamma=1).cuda()
                 val_loss = self.criterion(pred_seg, mask)
-                ce_loss = self.criterion(pred_class, labels)
-                val_loss += ce_loss
-
                 self.writer.val_loss.append(val_loss.item())
-                self.writer.ce.append(ce_loss.item())
 
                 if write2tensorboard:
                     #* Write predictions to tensorboard
                     if epoch % writer_interval == 0 and idx == 0:
-                        print('Predicted Labels + GT: ',
-                              self.writer.sigmoid(pred_class), labels)
                         self.writer.plot_mask(
-                            f'Predicted mask at epoch {epoch}', img=img, prediction=pred_seg)
+                            f'Predicted mask', img=img, prediction=pred_seg)
             print('Validation Loss:', np.mean(self.writer.val_loss))
             if epoch > self.swa_start:
                 self.swa_model.update_parameters(self.model)
@@ -209,29 +200,11 @@ class Midline():
         model = self.model
         #* Create placeholder
         x = Variable(torch.randn(input_shape)).to('cuda')
-        seg_out, heatmap, coords = model(x, x)
+        mask, classes = model(x, x)
         #* Only follow path of coordinates
-        graph = make_dot(coords.mean(), params=dict(model.named_parameters()))
+        graph = make_dot(mask.mean(), params=dict(model.named_parameters()))
         graph.render(output_path + 'graph.png')
         #summary(model, input_shape)
-
-    def write2file(self, array, targets, epoch, output_path='./logs/gifs/'):
-        #~ Write arrays to file for sanity checking
-        #* Colormaps for heatmaps
-        plt.style.use('dark_background')
-        cmap = sns.cubehelix_palette(
-            start=0.5, rot=-1., hue=1, gamma=1, as_cmap=True)
-        arr = array.cpu().detach().numpy()
-        targets = targets.cpu().numpy()
-        dist = zoom(input=arr, zoom=(10, 1), order=1)
-        tgt = zoom(input=targets, zoom=(10, 1), order=1)
-        fig, ax = plt.subplots(1, 2, figsize=(5, 10))
-        ax[0].set_title(f'Epoch: {epoch}')
-        ax[1].set_title('Ground-truth')
-        ax[0].imshow(dist.T, cmap=cmap)
-        ax[1].imshow(tgt.T, cmap=cmap)
-        fig.savefig(output_path + f'no_scheduler_heatmap_epoch_{epoch}.png')
-        plt.close()
 
     def save_best_model(self, model_name='best_model.pt'):
         #~ Check if latest validation is min. If True, save.
@@ -242,25 +215,3 @@ class Midline():
             print('Saving best model')
             torch.save(self.model.state_dict(),
                        self.output_path + model_name)
-
-    def plot_mask(self, names, pred, img):
-        fig, ax = plt.subplots(1, 1, figsize=(10, 10))
-        ax.axis('off')
-        for idx in np.arange(len(names)):
-            arr = pred[idx].cpu().numpy()
-            arr = self.sigmoid(arr)
-            img = np.moveaxis(img[idx].cpu().numpy(), 0, -1)
-            img = self.norm_img(img)
-            ax.imshow(img)
-            ax.imshow(arr[idx], alpha=0.5)
-            fig.savefig(self.output_path + f'masks/{names[idx]}.png')
-            plt.clf()
-        plt.close()
-
-    @staticmethod
-    def sigmoid(x):
-        return 1/(1+np.exp(-x))
-
-    @staticmethod
-    def norm_img(img):
-        return (img-img.min())/(img.max()-img.min())

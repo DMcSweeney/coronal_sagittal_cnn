@@ -100,7 +100,7 @@ class customSiameseUNet(nn.Module):
 
 
 class customUNet(nn.Module):
-    def __init__(self, n_outputs, input_size=(512,512)):
+    def __init__(self, n_outputs, classifier=False, input_size=(512,512)):
         """
         seg_outputs = outputs for segmentation map  (should be total verts + 1 - for background)
         class_outputs = outputs for classifier (should be total verts)
@@ -129,7 +129,8 @@ class customUNet(nn.Module):
         self.encoder = self.model.encoder
         self.decoder = self.model.decoder
         self.segmentation_head = self.model.segmentation_head
-        self.classifier = self.model.classification_head
+        self.classifier = self.model.classification_head if classifier else None
+
 
     def forward(self, x):
         #* Output are features at every spatial resolution

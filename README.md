@@ -13,4 +13,4 @@ CNN attempts  = multi-class segmentation + regression with DSNT. <br>
 
 `python trainTestValSplit.py`- organise files for training<br>
 
-`python train.py` - doesn't work yet and will need to be rewritten for predicting a single level
+`python find_midline.py` -> `python detection.py` -> `python locator.py`
