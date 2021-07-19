@@ -104,9 +104,9 @@ class customWriter(SummaryWriter):
             ax.imshow(plt_img)
             
             ax.imshow(mask[idx, 0], alpha=0.5)
-        ax.set_title(
-                'Predicted Mask @ epoch: {} - idx: {}'.format(self.epoch, idx))
-        self.add_figure(title, fig)
+            ax.set_title(
+                    'Predicted Mask @ epoch: {} - idx: {}'.format(self.epoch, idx))
+        self.add_figure(title, fig, global_step=self.epoch)
 
     def plot_prediction(self, title, img, prediction, targets=None, predicted=None):
         fig = plt.figure(figsize=(10, 10))

@@ -20,7 +20,7 @@ test_path = './midline_data/testing/'
 batch_size = 4
 n_outputs = 13
 learning_rate = 3e-3
-num_epochs = 200
+num_epochs = 500
 
 ENCODER = 'resnet34'
 ENCODER_WEIGHTS = 'imagenet'
@@ -63,11 +63,11 @@ def main():
 
     #!! TRAINING + VALIDATION
     model = Mtl.Midline(train_generator, valid_generator, test_generator,
-                         dir_name='exp1', detect=True, n_outputs=13)
-    model.forward(model_name='midline_finder.pt', num_epochs=300)
+                         dir_name='exp1', detect=True, n_outputs=13, output_path='./midline_output/')
+    model.forward(model_name='midline_finder.pt', num_epochs=num_epochs)
     #model.train(epoch=0)
     #model.validation(epoch=0)
-    #model.inference(plot_output=True, model_name='midline_finder.pt')
+    model.inference(model_name='midline_finder.pt', plot_output=True)
     torch.cuda.empty_cache()
 
 

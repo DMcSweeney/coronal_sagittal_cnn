@@ -25,6 +25,7 @@ import matplotlib.pyplot as plt
 import os
 import numpy as np
 import matplotlib
+from einops import rearrange
 
 matplotlib.use('Agg')
 
@@ -164,34 +165,29 @@ class Midline():
         self.model.eval()
         all_ids = []
         all_masks = []
-        all_labels = []
-
         with torch.set_grad_enabled(False):
             for idx, data in enumerate(tqdm(self.test_dataLoader)):
                 #* Load data
-                img = data['cor_image'].to(
+                cor_img = data['cor_image'].to(
                     self.device, dtype=torch.float32)
                 ids = data['id']
 
                 #* Get predictions
-                pred_seg, pred_class = self.model(img)
+                pred_seg = self.model(cor_img)
 
                 if plot_output:
                     #* Plot predictions
-                    self.plot_mask(ids, pred_seg, sag_img)
+                    self.plot_mask(ids, pred_seg, cor_img)
                 all_ids.append(ids)
                 all_masks.append(pred_seg.cpu().numpy())
-                all_labels.append(pred_class.cpu().numpy())
 
         all_ids = np.concatenate(all_ids, axis=0)
         all_masks = np.concatenate(all_masks, axis=0)
-        all_labels = np.concatenate(all_labels, axis=0)
 
-        print(all_ids.shape, all_masks.shape, all_labels.shape)
+        print(all_ids.shape, all_masks.shape)
         #** Save predictions to npz file for post-processing
         print('SAVING PREDICTIONS...')
-        np.savez(self.output_path + f'{model_name.split(".")[0]}_preds.npz', ids=all_ids,
-                 masks=all_masks, labels=all_labels)
+        np.savez(self.output_path + f'{model_name.split(".")[0]}_preds.npz', ids=all_ids, masks=all_masks)
 
     def viz_model(self, output_path='./logs/'):
         #~ View model architecture
@@ -215,3 +211,18 @@ class Midline():
             print('Saving best model')
             torch.save(self.model.state_dict(),
                        self.output_path + model_name)
+
+    def plot_mask(self, names, pred, img):
+        fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+        ax.axis('off')
+        for idx in np.arange(len(names)):
+            arr = pred[idx].cpu().numpy()
+            arr = self.sigmoid(arr).squeeze()
+            img = rearrange(img[idx].cpu(), 'c h w -> h w c')
+            img = img.numpy().squeeze()
+            img = self.norm_img(img)
+            ax.imshow(img, cmap='gray')
+            ax.imshow(arr, alpha=0.5)
+            fig.savefig(self.output_path + f'masks/{names[idx]}.png')
+            plt.clf()
+        plt.close()

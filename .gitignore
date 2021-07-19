@@ -12,3 +12,4 @@ logs/
 *.csv
 *.nii
 *.txt
+midline_output/
