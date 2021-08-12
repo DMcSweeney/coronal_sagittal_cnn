@@ -209,12 +209,12 @@ class spineDataset(Dataset):
 
 
 class midlineDataset(Dataset):
-    def __init__(self, dir_path, pre_processing_fn=None, transforms=None, normalise=True):
+    def __init__(self, img_paths, tgt_paths, pre_processing_fn=None, transforms=None, normalise=True):
         #~Custom dataset for spine models with coronal and sagittal inputs
         super().__init__()
 
-        self.coronal_inputs = self.load_data(dir_path + 'slices/coronal/')
-        self.masks = self.load_data(dir_path + 'targets/masks/')
+        self.coronal_inputs = self.load_data(img_paths)
+        self.masks = self.load_data(tgt_paths)
         self.norm_coronal_inputs = self.normalise_inputs(self.coronal_inputs)
         self.pre_processing_fn = self.get_preprocessing(pre_processing_fn)
         self.ids = self.get_ids()
@@ -229,29 +229,14 @@ class midlineDataset(Dataset):
         return self.coronal_inputs['id']
 
     @staticmethod
-    def load_data(path):
+    def load_data(path_dict):
         #*Load directory of npy slices.
         data_dict = {'slices': [], 'id': []}
-        for file in os.listdir(path):
-            if file.endswith('.npy'):
-                name = file.split('.')[0]
-                data_dict['id'].append(name)
-                slice_ = np.load(path + file)
-                data_dict['slices'].append(slice_)
+        for pid, path in path_dict.items():
+            data_dict['id'].append(pid)
+            slice_ = np.load(path)
+            data_dict['slices'].append(slice_)
         data_dict['slices'] = np.array(data_dict['slices'])
-        return data_dict
-
-    @staticmethod
-    def load_coordinates(path):
-        #*Load directory of csv files with coordinate info
-        data_dict = {}
-        for file in os.listdir(path):
-            if file.endswith('.csv'):
-                name = file.split('.')[0]
-                df = pd.read_csv(path + file)
-                data_dict[name] = {}
-                for i, row in df.iterrows():
-                    data_dict[name][row[0]] = row[1]
         return data_dict
 
     @staticmethod
@@ -336,3 +321,81 @@ class midlineDataset(Dataset):
             f.write(f'Vert encoding: {self.categories}\n')
             for i, cat in enumerate(self.categories):
                 f.write(f'{cat}: {counts[i]}\n')
+
+###** ----- K FOLD SPLITTER ----
+
+class k_fold_splitter():
+    def __init__(self, root_dir, testing_fold, mode, num_folds=4):
+        self.root = root_dir
+        self.test_fold = testing_fold
+        self.mode = mode
+        self.seed = 12345
+        self.train_test_ratio=0.8
+    
+    def split_data(self):
+        if self.mode == 'Inference':
+            return self.inference_split()
+        if self.mode == 'Training':
+            return self.training_split()
+        else:
+            raise ValueError(
+                "Unspecificied mode, should be one of 'Training, Inference'")
+
+
+    def inference_split(self):
+        #~ go through testing fold and return relevant filepaths
+        tgt_dict = {}
+        img_dict = {}
+        for root, dirs, files in os.walk(self.root):
+            if files and f'q{self.test_fold}' in root:
+                if 'slices' in root:
+                    for file in files:
+                        name = file.split('.')[0]
+                        img_dict[name] = os.path.join(root, file)
+                elif 'targets' in root:
+                    for file in files:
+                        name = file.split('.')[0]
+                        tgt_dict[name] = os.path.join(root, file)
+                else:
+                    continue
+        assert len(img_dict.keys()) != 0 and len(tgt_dict.keys()) !=0, 'Issue with directory structure'
+        return img_dict, tgt_dict
+
+    def training_split(self):
+        #~ Collect all training files, then train/val split and return both lists
+        img_dict = {}
+        tgt_dict = {}
+        for root, dirs, files in os.walk(self.root):
+            if files and f'q{self.test_fold}' not in root:
+                if 'slices' in root:
+                    for file in files:
+                        name = file.split('.')[0]
+                        img_dict[name] = os.path.join(root, file)
+                elif 'targets' in root:
+                    for file in files:
+                        name = file.split('.')[0]
+                        tgt_dict[name] = os.path.join(root, file)
+                else:
+                    continue
+        assert len(img_dict.keys()) != 0 and len(tgt_dict.keys()) !=0, 'Issue with directory structure'
+        assert img_dict.keys() == tgt_dict.keys(), "Keys don't match for masks and images"
+        train_ids, test_ids = self.train_test_ids(img_dict)
+        train_img, train_tgt = self.split_dicts(train_ids, img_dict, tgt_dict)
+        test_img, test_tgt = self.split_dicts(test_ids, img_dict, tgt_dict)
+        return (train_img, train_tgt), (test_img, test_tgt)
+
+    @staticmethod
+    def split_dicts(ids, img_dict, tgt_dict):
+        return {pid: img_dict[pid] for pid in ids}, {pid: tgt_dict[pid] for pid in ids}
+
+    def train_test_ids(self, img_dict):
+        #~ Shuffle and pick ids for training/testing
+        ids = list(img_dict.keys())
+        np.random.seed(seed=self.seed)
+        indices = np.random.rand(len(ids)).argsort()
+        train_size = int(len(ids)*self.train_test_ratio)
+        print(train_size, len(ids), len(indices))
+        train_ids = np.array(ids)[indices[:train_size]]
+        test_ids = np.array(ids)[indices[train_size:]]
+        print(f'Training: {len(train_ids)}; Testing: {len(test_ids)}')
+        return train_ids, test_ids

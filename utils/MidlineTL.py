@@ -37,13 +37,13 @@ class Midline():
       dir_name = directory name used for splitting tensorboard runs.   
     """
 
-    def __init__(self, train_dataLoader, val_dataLoader, test_dataLoader, dir_name, device="cuda:0",
+    def __init__(self, training=None, validation=None, testing=None, dir_name=None, device="cuda:0",
                  batch_size=4, n_outputs=13, learning_rate=3e-3, num_epochs=200, output_path='./outputs/', detect=False):
         self.device = torch.device(device)
         torch.cuda.set_device(self.device)
-        self.train_dataLoader = train_dataLoader
-        self.val_dataLoader = val_dataLoader
-        self.test_dataLoader = test_dataLoader
+        self.train_dataLoader = training
+        self.val_dataLoader = validation
+        self.test_dataLoader = testing
         self.model = cm2.customUNet(n_outputs=n_outputs, classifier=False).cuda()
         self.optimizer = Adam(self.model.parameters(), lr=learning_rate)
         #* Stochastic Weight Averaging (https://pytorch.org/docs/stable/optim.html#putting-it-all-together)
@@ -69,7 +69,6 @@ class Midline():
         return (img-img.min())/(img.max()-img.min())
         
     def forward(self, num_epochs=200, model_name='best_model.pt'):
-
         #~ Forward pass def
         for epoch in range(num_epochs+1):
             self.writer.epoch = epoch
@@ -95,7 +94,6 @@ class Midline():
         #~Main training loop
         #@param:
         #    writer_interval = write to tensorboard every x epochs
-
         #* Allow param optimisation & reset losses
         self.model.train()
         self.writer.reset_losses()
@@ -156,7 +154,7 @@ class Midline():
 
             self.writer.add_scalar(
                 'Validation Loss', np.mean(self.writer.val_loss), epoch)
-            self.writer.add_scalar('CE loss', np.mean(self.writer.ce), epoch)
+            #self.writer.add_scalar('CE loss', np.mean(self.writer.ce), epoch)
 
     def inference(self, model_name='best_model.pt', plot_output=False):
         #~ Model Inference
@@ -215,6 +213,7 @@ class Midline():
     def plot_mask(self, names, pred, img):
         fig, ax = plt.subplots(1, 1, figsize=(10, 10))
         ax.axis('off')
+        os.makedirs(self.output_path + 'masks/', exist_ok=True)
         for idx in np.arange(len(names)):
             arr = pred[idx].cpu().numpy()
             arr = self.sigmoid(arr).squeeze()

@@ -4,19 +4,26 @@ Script for training Unet to detect midline for coronal projections
 import cv2
 
 import torch
+from torch._C import Value
 from torch.utils.data import DataLoader
 
 import albumentations as A
 import segmentation_models_pytorch as smp
 
 import utils.MidlineTL as Mtl
-from utils.customDataset_v2 import midlineDataset
+from utils.customDataset_v2 import midlineDataset, k_fold_splitter
+from argparse import ArgumentParser
 
 torch.autograd.set_detect_anomaly(True)
+
+parser = ArgumentParser(prog='Run midline inference')
+parser.add_argument('--root_dir', help='Root path containing all folds', type=str)
+parser.add_argument('--output_dir', help='Directory to save model + model predictions during inference', type=str)
+parser.add_argument('--fold', help='Fold used for !testing! all others used for training', type=int)
+parser.add_argument('--mode', help='training/inference', type=str, default='inference')
+args = parser.parse_args()
+
 # *Declare Paths + variables
-train_path = './midline_data/training/'
-valid_path = './midline_data/validation/'
-test_path = './midline_data/testing/'
 batch_size = 4
 n_outputs = 13
 learning_rate = 3e-3
@@ -45,29 +52,43 @@ def main():
     pre_processing_fn = smp.encoders.get_preprocessing_fn(
         ENCODER, ENCODER_WEIGHTS)
 
-    # ** Create Dataset for training
-    train_dataset = midlineDataset(
-        train_path, pre_processing_fn=pre_processing_fn,
-        transforms=train_transforms, normalise=True) 
-    valid_dataset = midlineDataset(
-        valid_path, pre_processing_fn=pre_processing_fn,
-        transforms=valid_transforms, normalise=True)
-    test_dataset = midlineDataset(
-        test_path, pre_processing_fn=pre_processing_fn,
-        transforms=test_transforms, normalise=True)
+    #** Get training and val folds:
+    splitter = k_fold_splitter(args.root_dir, args.fold, args.mode, num_folds=4)
 
-    # ** Convert to Dataloaders
-    train_generator = DataLoader(train_dataset, batch_size=batch_size)
-    valid_generator = DataLoader(valid_dataset, batch_size=batch_size)
-    test_generator = DataLoader(test_dataset, batch_size=1)
+    if args.mode == 'Training':
+        train, test = splitter.split_data()
+        # ** Create Dataset for training
+        train_dataset = midlineDataset(
+            *train, pre_processing_fn=pre_processing_fn,
+            transforms=train_transforms, normalise=True)
+        valid_dataset = midlineDataset(
+            *test, pre_processing_fn=pre_processing_fn,
+            transforms=valid_transforms, normalise=True)
+        # ** Convert to Dataloaders
+        train_generator = DataLoader(train_dataset, batch_size=batch_size)
+        valid_generator = DataLoader(valid_dataset, batch_size=batch_size)
 
-    #!! TRAINING + VALIDATION
-    model = Mtl.Midline(train_generator, valid_generator, test_generator,
-                         dir_name='exp1', detect=True, n_outputs=13, output_path='./midline_output/')
-    model.forward(model_name='midline_finder.pt', num_epochs=num_epochs)
-    #model.train(epoch=0)
-    #model.validation(epoch=0)
-    model.inference(model_name='midline_finder.pt', plot_output=True)
+        model = Mtl.Midline(training=train_generator, validation=valid_generator, testing=None,
+                            dir_name='exp1', detect=True, n_outputs=13, output_path=args.output_dir)
+        model.forward(model_name='midline_finder.pt', num_epochs=num_epochs)
+        #model.train(epoch=0)
+        #model.validation(epoch=0)
+
+    elif args.mode == 'Inference':
+        images, targets = splitter.split_data()
+        #* Create dataset for inference
+        test_dataset = midlineDataset(
+            images, targets, pre_processing_fn=pre_processing_fn,
+            transforms=test_transforms, normalise=True)
+        #** Convert to dataloader
+        test_generator = DataLoader(test_dataset, batch_size=1)
+        model = Mtl.Midline(training=None, validation=None, testing=test_generator,
+                            dir_name='exp1', detect=True, n_outputs=13, output_path=args.output_dir)
+        model.inference(model_name='midline_finder.pt', plot_output=True)
+    #~ TRAINING + VALIDATION
+
+    else:
+        raise ValueError("Unspecificied mode, should be one of 'Training, Inference'")
     torch.cuda.empty_cache()
 
 
