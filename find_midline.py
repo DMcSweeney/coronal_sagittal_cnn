@@ -27,7 +27,7 @@ args = parser.parse_args()
 batch_size = 4
 n_outputs = 13
 learning_rate = 3e-3
-num_epochs = 500
+num_epochs = 250
 
 ENCODER = 'resnet34'
 ENCODER_WEIGHTS = 'imagenet'
@@ -69,7 +69,7 @@ def main():
         valid_generator = DataLoader(valid_dataset, batch_size=batch_size)
 
         model = Mtl.Midline(training=train_generator, validation=valid_generator, testing=None,
-                            dir_name='exp1', detect=True, n_outputs=13, output_path=args.output_dir)
+                            dir_name='exp1', n_outputs=13, output_path=args.output_dir)
         model.forward(model_name='midline_finder.pt', num_epochs=num_epochs)
         #model.train(epoch=0)
         #model.validation(epoch=0)
@@ -83,8 +83,8 @@ def main():
         #** Convert to dataloader
         test_generator = DataLoader(test_dataset, batch_size=1)
         model = Mtl.Midline(training=None, validation=None, testing=test_generator,
-                            dir_name='exp1', detect=True, n_outputs=13, output_path=args.output_dir)
-        model.inference(model_name='midline_finder.pt', plot_output=True)
+                            dir_name='exp1', n_outputs=13, output_path=args.output_dir)
+        model.inference(model_name='midline_finder.pt', plot_output=True, save_preds=True)
     #~ TRAINING + VALIDATION
 
     else:

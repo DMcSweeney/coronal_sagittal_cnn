@@ -13,6 +13,10 @@ import dsntnn
 import torch.nn.functional as F
 import random
 import segmentation_models_pytorch as smp
+from types import MethodType
+from torch.quantization import QuantStub, DeQuantStub
+from torchvision.models.resnet import BasicBlock
+from segmentation_models_pytorch.unet.decoder import DecoderBlock
 
 random.seed(60)
 
@@ -146,3 +150,108 @@ class customUNet(nn.Module):
             return seg_out, class_out
 
         return seg_out
+
+#* ------------------- Quantization-aware  -----------
+
+
+class qat_UNet(nn.Module):
+    #~ UNet ready for quantization-aware training
+    def __init__(self, n_outputs, classifier=False, input_size=(512, 512)):
+        """
+        seg_outputs = outputs for segmentation map  (should be total verts + 1 - for background)
+        class_outputs = outputs for classifier (should be total verts)
+        """
+        super(qat_UNet, self).__init__()
+        self.input_size = input_size
+        self.decoder_channels = [256, 128, 64, 32, 16]
+        # For classifier at end of segmentation head
+        self.aux_params = dict(
+            pooling='avg',             # one of 'avg', 'max'
+            dropout=0.5,               # dropout ratio, default is None
+            activation=None,      # activation function, default is None
+            classes=n_outputs,                 # define number of output labels
+        )
+        # Model
+        self.model = smp.Unet(
+            encoder_name="resnet34",
+            encoder_weights="imagenet",
+            encoder_depth=5,
+            in_channels=3,
+            classes=1,
+            aux_params=self.aux_params,
+            decoder_channels=tuple(self.decoder_channels)
+        )
+        #* Decompose model
+        self.quant = QuantStub()
+        self.unquant = DeQuantStub()
+        #* Quantize encoder
+        self.encoder = self.model.encoder
+        self.encoder.quant = QuantStub()  # * Converts float tensors to int
+        self.encoder.unquant = DeQuantStub() #* Converts back to float
+        self.encoder.forward = MethodType(self.encoder_forward, self.encoder)
+
+        #* Quantize decoder
+        self.decoder = self.model.decoder
+        self.decoder.quant = QuantStub()
+        self.decoder.unquant = DeQuantStub()
+        self.decoder.forward = MethodType(self.decoder_forward, self.decoder)
+
+        #* Seg. head + classifier are sequential not modules 
+        self.segmentation_head = self.model.segmentation_head
+        self.classifier = self.model.classification_head if classifier else None
+
+    def forward(self, x):
+        #* Output are features at every spatial resolution
+        out = self.encoder.forward(x)
+        #* Upscale to match input spatial resolution
+        decoder_output = self.decoder.forward(*out)
+
+        #* Get correct number of channels
+        decoder_output = self.quant(decoder_output)
+        seg_out = self.segmentation_head.forward(decoder_output)
+        seg_out = self.unquant(seg_out)
+        if self.classifier is not None:
+            class_in = self.quant(out[-1])
+            class_out = self.classifier(class_in)
+            class_out = self.unquant(class_out)
+            return seg_out, class_out
+        return seg_out
+
+    def fuse_model(self):
+        #* Prepare model for quantization-aware training
+        #* Only fuse encoder basic blocks
+        #TODO Figure out how to fuse remaining layers
+        for m in self.encoder.modules():
+            if type(m) == BasicBlock:
+                torch.quantization.fuse_modules(m, ['conv1', 'bn1', 'relu'], inplace=True)
+
+
+    @staticmethod
+    def encoder_forward(self, x):
+        #~ Quantized impl. of encoder forward method
+        stages = self.get_stages()
+        features = []
+        for i in range(self._depth + 1):
+            x = self.quant(x) #* Quantize
+            x = stages[i](x)
+            x = self.unquant(x) #* Back to float
+            features.append(x)
+
+        return features
+
+    @staticmethod
+    def decoder_forward(self, *features):
+        features = features[1:]
+        features = features[::-1]
+
+        head = features[0]
+        skips = features[1:]
+        x = self.quant(head)
+        x = self.center(x)
+        x = self.unquant(x)
+        for i, decoder_block in enumerate(self.blocks):
+            skip = skips[i] if i < len(skips) else None
+            x = self.quant(x)
+            x = decoder_block(x, skip)
+            x = self.unquant(x)
+        return x

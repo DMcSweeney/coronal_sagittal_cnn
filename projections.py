@@ -318,7 +318,7 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), 
             
             print(out_img.GetSize(), out_img.GetSpacing(), out_img.GetDirection())
             sitk.WriteImage(
-                out_img, f'./ct_volumes/{name}.nii')
+                out_img, output_dir + f'ct_volumes/{name}.nii')
 
         if plot:
             #* Sanity check plots
