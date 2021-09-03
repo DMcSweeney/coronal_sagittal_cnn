@@ -96,10 +96,13 @@ def get_ROI(vol, fit, width=4):
 def get_sagittal_slice(name, fold, fit):
     vol_path = f'/data/PAB_data/volume_folds/q{fold}/{name}.nii'
     vol = sitk.ReadImage(vol_path)
+    print(vol.GetSpacing(), vol.GetSize())
     #* Resample volume
     vol, _ = proj.resample(vol, (1.25, 1.25, 1.25))
+    print(vol.GetSpacing(), vol.GetSize())
     #* Pad to 512, 512, 512
     vol,  _ = pad_image(vol, (512, 512, 512))
+    print(vol.GetSpacing(), vol.GetSize())
     vol = sitk.GetArrayFromImage(vol)
     #* Extract thick slice
     thick_slice = get_ROI(vol, fit)
@@ -116,6 +119,7 @@ def extract_sagittal_projections(ids, masks, fold, output_path, save_slice=False
         fit = mask2midline(mask[0], N=15)
         #* Convert back to original frame   
         slice_ = get_sagittal_slice(id_, fold, fit)
+        break
         if save_slice:
             np.save(os.path.join(output_path, f'{id_}.npy'), slice_)
         if plot_slice:
