@@ -207,6 +207,7 @@ class spineDataset(Dataset):
             for i, cat in enumerate(self.categories):
                 f.write(f'{cat}: {counts[i]}\n')
 
+##@ ------------------------------------------------------------------------- MIDLINE DATASET ---------------------------------------------
 
 class midlineDataset(Dataset):
     def __init__(self, img_paths, tgt_paths, pre_processing_fn=None, transforms=None, normalise=True):
@@ -322,7 +323,91 @@ class midlineDataset(Dataset):
             for i, cat in enumerate(self.categories):
                 f.write(f'{cat}: {counts[i]}\n')
 
-###** ----- K FOLD SPLITTER ----
+
+#@ ------------------------------------------------------SEGMENTER DATASET --------------------------------------------------------
+
+class SegmenterDataset(Dataset):
+    def __init__(self, img_paths, tgt_paths, pre_processing_fn=None, transforms=None, normalise=True):
+        #~ Custom Dataset for sagittal vert. body segmenter
+        super().__init__()
+        self.sagittal_inputs = self.load_data(img_paths)
+        self.masks = self.load_data(tgt_paths)
+        self.norm_sagittal_inputs = self.normalise_inputs(self.sagittal_inputs)
+        self.pre_processing_fn = self.get_preprocessing(pre_processing_fn)
+
+    @staticmethod
+    def load_data(path_dict):
+        #*Load directory of npy slices.
+        data_dict = {'slices': [], 'id': []}
+        for pid, path in path_dict.items():
+            data_dict['id'].append(pid)
+            slice_ = np.load(path)
+            data_dict['slices'].append(slice_)
+        data_dict['slices'] = np.array(data_dict['slices'])
+        return data_dict
+
+    @staticmethod
+    def normalise_inputs(data):
+        #*Normalise inputs between [0, 1]
+        return (data['slices'] - data['slices'].min())/(data['slices'].max()-data['slices'].min())
+
+    def get_preprocessing(self, pre_processing_fn):
+        """
+        Construct preprocessing transform
+        from https://github.com/qubvel/segmentation_models.pytorch/blob/master/examples/cars%20segmentation%20(camvid).ipynb 
+        [Cell 11]
+        Args:
+            preprocessing_fn (callbale): data normalization function 
+                (can be specific for each pretrained neural network)
+        Return:
+            transform: albumentations.Compose
+        """
+        _transform = [
+            A.Lambda(name='pre_process', image=pre_processing_fn),
+            A.Lambda(name='to_tensor', image=self.to_tensor,
+                     mask=self.to_tensor),
+        ]
+        return A.Compose(_transform)
+
+    @staticmethod
+    def to_tensor(x, **kwargs):
+        return x.transpose(2, 0, 1).astype('float32')
+
+    def __len__(self):
+        return len(self.sagittal_inputs['id'])
+    
+    def __getitem__(self, index):
+        #~ Main Function
+        pid = self.ids[index]
+        if self.normalise:
+            #* Norm inputs -> [0, 1]
+            sag_img = self.norm_sagittal_inputs[index][..., np.newaxis]
+        else:
+            sag_img = self.sagittal_inputs['slices'][index][..., np.newaxis]
+        #* Apply softmax across each channel of heatmap
+
+        mask = self.masks['slices'][index]
+        if self.transforms:
+            #* Apply transforms
+            augmented = self.transforms(image=sag_img, mask=mask)
+            sag_img, mask = augmented.values()
+            #* Pre-processing for using segmentation-models library (w/ pre-trained encoders)
+            if self.pre_processing_fn is not None:
+                sag_prep = self.pre_processing_fn(image=sagf_img, mask=mask)
+                sag_img, mask = sag_prep['image'], sag_prep['mask']
+            #* Convert list of labels to tensor
+            out_mask = torch.max(torch.tensor(
+                mask), dim=0, keepdim=True).values
+            #~Prepare sample
+            sample = {'cor_image': sag_img,
+                      'mask': out_mask,
+                      'id': pid}
+        else:
+            print('Need some transforms - minimum convert to Tensor')
+            return
+        return sample
+
+###@ ---------------------------------------------------------- K FOLD SPLITTER ------------------------------------------------------
 
 class k_fold_splitter():
     def __init__(self, root_dir, testing_fold, mode, num_folds=4):

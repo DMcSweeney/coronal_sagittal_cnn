@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 from torchsummary import summary
 from torch.optim import Adam
+import torch.optim.swa_utils as swa
 
 from torchviz import make_dot
 import graphviz
@@ -25,34 +26,48 @@ import seaborn as sns
 
 import utils.customModel_v2 as cm2
 import utils.customWriter_v2 as cw2
-import utils.customLosses as cl 
-from kornia.losses import binary_focal_loss_with_logits
 
 
-class Detector():
+class Segmenter():
     """
     ~Class for training vertebrae detector/segmentation model
     @params: 
       dir_name = directory name used for splitting tensorboard runs.   
     """
     def __init__(self, train_dataLoader, val_dataLoader, test_dataLoader, dir_name, device="cuda:0", 
-                    batch_size=4, n_outputs=13, learning_rate=3e-3, num_epochs=200, output_path='./outputs/', detect=False):
+                    batch_size=4, n_outputs=13, learning_rate=3e-3, num_epochs=200, output_path='./outputs/', model_path=None, SWA=False):
         self.device = torch.device(device)
         torch.cuda.set_device(self.device)
         self.train_dataLoader = train_dataLoader
         self.val_dataLoader = val_dataLoader
         self.test_dataLoader = test_dataLoader
-        self.model = cm2.customUNet(n_outputs=n_outputs).cuda()
+        self.model = cm2.customUNet(n_outputs=n_outputs, classifier=False).cuda()
         self.optimizer = Adam(self.model.parameters(), lr=learning_rate)
+
         self.criterion = nn.BCEWithLogitsLoss().cuda()
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', verbose=True)
         self.num_epochs = num_epochs
         self.writer = cw2.customWriter(log_dir=f'./runs/{dir_name}', batch_size=batch_size, num_classes=n_outputs)
         self.best_loss = 10000 # Initialise loss for saving best model
         self.output_path = output_path
-    
-    def forward(self, num_epochs=200, model_name='best_model.pt'):
+        self.model_path = model_path
 
+        #** Stochastic Weight Averaging (https://pytorch.org/docs/stable/optim.html#putting-it-all-together)
+        self.swa = SWA
+        self.swa_model = swa.AveragedModel(self.model) if SWA else None
+        self.swa_scheduler = swa.SWALR(
+            self.optimizer, swa_lr=0.05) if SWA else None  # LR set to large value
+        self.swa_start = 100 if SWA else None  # START EPOCH from SWA
+    
+    @staticmethod
+    def sigmoid(x):
+        return 1/(1+np.exp(-x))
+
+    @staticmethod
+    def norm_img(img):
+        return (img-img.min())/(img.max()-img.min())
+
+    def forward(self, num_epochs=200, model_name='best_model.pt'):
         #~ Forward pass def
         for epoch in range(num_epochs+1):
             self.writer.epoch = epoch
@@ -64,6 +79,17 @@ class Detector():
             #* Save best model
             self.save_best_model(model_name=model_name)
         
+        #* Update batch norm stats. for SWA model
+        if self.swa:
+            print('Updating batch norm stats')
+            for data in tqdm(self.train_dataLoader):
+                img = data['sag_image'].to(self.device, dtype=torch.float32)
+                self.swa_model(img)
+            print('Saving best model')
+            torch.save(self.swa_model.state_dict(),
+                       self.output_path + f"{model_name.split('.')[0]}_SWA.pt")
+
+
     def train(self, epoch, write2tensorboard=True, writer_interval=20, viz_model=False):
         #~Main training loop
         #@param:
@@ -78,17 +104,13 @@ class Detector():
         # ** Training Loop **
         for idx, data in enumerate(tqdm(self.train_dataLoader)):
             #*Load data
-            sag_img = data['sag_image'].to(self.device, dtype=torch.float32)
+            img = data['sag_image'].to(self.device, dtype=torch.float32)
             mask = data['mask'].to(self.device, dtype=torch.float32)
-            keypoints, labels = data['keypoints'].to(self.device, dtype=torch.float32), data['class_labels'].to(self.device, dtype=torch.float32)
             self.optimizer.zero_grad() #Reset gradients
         
-            pred_seg, pred_class = self.model(sag_img)
+            pred_seg = self.model(img)
             #* Loss + Regularisation
-            #loss = binary_focal_loss_with_logits(input=pred_seg, target=mask, reduction='mean', gamma=1).cuda()
             loss = self.criterion(pred_seg, mask)
-            ce_loss = self.criterion(pred_class, labels)
-            loss += ce_loss
             self.writer.train_loss.append(loss.item())
             #* Optimiser step
             loss.backward()
@@ -96,9 +118,8 @@ class Detector():
             if write2tensorboard:
                 # ** Write inputs to tensorboard
                 if epoch % writer_interval ==0  and idx == 0:
-                    self.writer.plot_inputs(f'Sagittal Inputs at epoch {epoch}', sag_img, targets=[
-                                       keypoints, labels])
-                    self.writer.plot_mask(f'Ground-truth at epoch {epoch}', img=sag_img, prediction=mask)
+                    self.writer.plot_mask(
+                        f'Ground-truth', img=img, prediction=mask)
             
         print('Train Loss:', np.mean(self.writer.train_loss))
         self.writer.add_scalar('Training Loss', np.mean(
@@ -110,66 +131,66 @@ class Detector():
             print('Validation...')
             for idx, data in enumerate(tqdm(self.val_dataLoader)):
                 #* Load data
-                sag_img = data['sag_image'].to(self.device, dtype=torch.float32)
+                img = data['sag_image'].to(self.device, dtype=torch.float32)
                 mask = data['mask'].to(self.device, dtype=torch.float32)
-                keypoints, labels = data['keypoints'].to(self.device, dtype=torch.float32), data['class_labels'].to(self.device, dtype=torch.float32)
-                pred_seg, pred_class = self.model(sag_img)
+                pred_seg= self.model(img)
                 
                 #* Loss 
-                # val_loss = binary_focal_loss_with_logits(
-                #     input=pred_seg, target=mask, reduction='mean', gamma=1).cuda()
                 val_loss = self.criterion(pred_seg, mask)
-                ce_loss = self.criterion(pred_class, labels)
-                val_loss += ce_loss
 
                 self.writer.val_loss.append(val_loss.item())
-                self.writer.ce.append(ce_loss.item())
                 
                 if write2tensorboard:
                     #* Write predictions to tensorboard
                     if epoch % writer_interval == 0 and idx==0:
-                        print('Predicted Labels + GT: ', self.writer.sigmoid(pred_class), labels)
-                        self.writer.plot_mask(f'Predicted mask at epoch {epoch}', img=sag_img, prediction=pred_seg)                        
+                        self.writer.plot_mask(
+                            f'Predicted mask', img=img, prediction=pred_seg)
             print('Validation Loss:', np.mean(self.writer.val_loss))
-            self.scheduler.step(np.mean(self.writer.val_loss))
+            if self.swa:
+                if epoch > self.swa_start:
+                    self.swa_model.update_parameters(self.model)
+                    self.swa_scheduler.step()
+            else:
+                self.scheduler.step(np.mean(self.writer.val_loss))
             self.writer.add_scalar('Validation Loss', np.mean(self.writer.val_loss), epoch)
-            self.writer.add_scalar('CE loss', np.mean(self.writer.ce), epoch)
 
-    def inference(self, model_name='best_model.pt', plot_output=False):
+    def inference(self, model_name='best_model.pt', plot_output=False, save_preds=False):
         #~ Model Inference
         print('Inference...')
-        self.model.load_state_dict(torch.load(self.output_path + model_name))
+        if self.model_path is None:
+            self.model.load_state_dict(torch.load(self.output_path + model_name))
+        else:
+            self.model.load_state_dict(
+                torch.load(self.model_path + model_name))
         self.model.eval()
         all_ids = []
         all_masks = []
-        all_labels = []
-
         with torch.set_grad_enabled(False):
             for idx, data in enumerate(tqdm(self.test_dataLoader)):
                 #* Load data
-                sag_img = data['sag_image'].to(
+                img = data['sag_image'].to(
                     self.device, dtype=torch.float32)
                 ids = data['id']
-
                 #* Get predictions
-                pred_seg, pred_class = self.model(sag_img)
+                pred_seg = self.model(img)
                
                 if plot_output:
                     #* Plot predictions
-                    self.plot_mask(ids, pred_seg, sag_img)
+                    self.plot_mask(ids, pred_seg, img)
                 all_ids.append(ids)
                 all_masks.append(pred_seg.cpu().numpy())
-                all_labels.append(pred_class.cpu().numpy())
 
         all_ids = np.concatenate(all_ids, axis=0)
         all_masks= np.concatenate(all_masks, axis=0)
-        all_labels = np.concatenate(all_labels, axis=0)
 
-        print(all_ids.shape, all_masks.shape, all_labels.shape)
-        #** Save predictions to npz file for post-processing
-        print('SAVING PREDICTIONS...')
-        np.savez(self.output_path + f'{model_name.split(".")[0]}_preds.npz', ids=all_ids,
-                    masks=all_masks, labels=all_labels)
+        print(all_ids.shape, all_masks.shape)
+        if save_preds:
+            #** Save predictions to npz file for post-processing
+            print('SAVING PREDICTIONS...')
+            np.savez(self.output_path + f'{model_name.split(".")[0]}_preds.npz', ids=all_ids,
+                        masks=all_masks)
+        else:
+            return all_ids, all_masks
 
     def viz_model(self, output_path='./logs/'):
         #~ View model architecture
@@ -178,9 +199,9 @@ class Detector():
         model = self.model
         #* Create placeholder
         x = Variable(torch.randn(input_shape)).to('cuda')
-        seg_out, heatmap, coords = model(x, x)
+        mask, classes = model(x, x)
         #* Only follow path of coordinates
-        graph = make_dot(coords.mean(), params=dict(model.named_parameters()))
+        graph = make_dot(mask.mean(), params=dict(model.named_parameters()))
         graph.render(output_path + 'graph.png')
         #summary(model, input_shape)
 
@@ -226,10 +247,4 @@ class Detector():
             plt.clf()
         plt.close()
 
-    @staticmethod
-    def sigmoid(x):
-        return 1/(1+np.exp(-x))
 
-    @staticmethod
-    def norm_img(img):
-        return (img-img.min())/(img.max()-img.min())
