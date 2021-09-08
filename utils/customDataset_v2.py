@@ -14,6 +14,8 @@ from scipy.special import softmax
 import dsntnn
 import scipy.stats as ss
 
+from einops import rearrange
+
 class spineDataset(Dataset):
     def __init__(self, dir_path, pre_processing_fn=None, transforms=None, normalise=True, sample_points=False, detect=False):
         #~Custom dataset for spine models with coronal and sagittal inputs 
@@ -102,7 +104,8 @@ class spineDataset(Dataset):
 
     @staticmethod
     def to_tensor(x, **kwargs):
-        return x.transpose(2, 0, 1).astype('float32')
+        return rearrange('h w c -> c h w', x).astype(np.float32)
+        #return x.transpose(2, 0, 1).astype('float32')
 
     def get_preprocessing(self, pre_processing_fn):
         """
@@ -247,7 +250,7 @@ class midlineDataset(Dataset):
 
     @staticmethod
     def to_tensor(x, **kwargs):
-        return x.transpose(2, 0, 1).astype('float32')
+        return rearrange('h w c -> c h w', x).astype(np.float32)
 
     def get_preprocessing(self, pre_processing_fn):
         """
@@ -281,6 +284,7 @@ class midlineDataset(Dataset):
         #* Apply softmax across each channel of heatmap
         
         mask = self.masks['slices'][index]
+
         #!! Don't randomly sample keypoints when doing validation
         if self.transforms:
             #* Apply transforms
@@ -334,6 +338,12 @@ class SegmenterDataset(Dataset):
         self.masks = self.load_data(tgt_paths)
         self.norm_sagittal_inputs = self.normalise_inputs(self.sagittal_inputs)
         self.pre_processing_fn = self.get_preprocessing(pre_processing_fn)
+        self.ids = self.get_ids()
+        self.transforms = transforms
+        self.normalise = normalise
+        self.img_size = self.sagittal_inputs['slices'].shape[1:3]
+        self.ordered_verts = ['T4', 'T5', 'T6', 'T7', 'T8', 'T9',
+                              'T10', 'T11', 'T12', 'L1', 'L2', 'L3', 'L4']
 
     @staticmethod
     def load_data(path_dict):
@@ -371,7 +381,11 @@ class SegmenterDataset(Dataset):
 
     @staticmethod
     def to_tensor(x, **kwargs):
-        return x.transpose(2, 0, 1).astype('float32')
+        return rearrange(torch.tensor(x), 'h w c -> c h w').to(dtype=torch.float32)
+    
+    def get_ids(self):
+        #* Get patient names
+        return self.sagittal_inputs['id']
 
     def __len__(self):
         return len(self.sagittal_inputs['id'])
@@ -386,21 +400,18 @@ class SegmenterDataset(Dataset):
             sag_img = self.sagittal_inputs['slices'][index][..., np.newaxis]
         #* Apply softmax across each channel of heatmap
 
-        mask = self.masks['slices'][index]
+        mask = self.masks['slices'][index][..., np.newaxis]
         if self.transforms:
             #* Apply transforms
             augmented = self.transforms(image=sag_img, mask=mask)
             sag_img, mask = augmented.values()
             #* Pre-processing for using segmentation-models library (w/ pre-trained encoders)
             if self.pre_processing_fn is not None:
-                sag_prep = self.pre_processing_fn(image=sagf_img, mask=mask)
+                sag_prep = self.pre_processing_fn(image=sag_img, mask=mask)
                 sag_img, mask = sag_prep['image'], sag_prep['mask']
-            #* Convert list of labels to tensor
-            out_mask = torch.max(torch.tensor(
-                mask), dim=0, keepdim=True).values
             #~Prepare sample
-            sample = {'cor_image': sag_img,
-                      'mask': out_mask,
+            sample = {'sag_image': sag_img,
+                      'mask': torch.squeeze(mask),
                       'id': pid}
         else:
             print('Need some transforms - minimum convert to Tensor')

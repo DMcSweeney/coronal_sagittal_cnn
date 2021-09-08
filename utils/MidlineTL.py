@@ -28,6 +28,7 @@ import numpy as np
 import matplotlib
 from einops import rearrange
 from segmentation_models_pytorch.unet.decoder import DecoderBlock
+from utils.customLosses import EarlyStopping
 
 matplotlib.use('Agg')
 
@@ -49,6 +50,7 @@ class Midline():
         self.test_dataLoader = testing
         self.model = cm2.customUNet(n_outputs=n_outputs, classifier=False).cuda()
         self.optimizer = Adam(self.model.parameters(), lr=learning_rate)
+        self.es = EarlyStopping(patience=75)
 
         #** Stochastic Weight Averaging (https://pytorch.org/docs/stable/optim.html#putting-it-all-together)
         self.swa = SWA
@@ -85,7 +87,9 @@ class Midline():
             self.validation(epoch=epoch, write2tensorboard=True,
                             writer_interval=10, write_gif=False)
             #* Save best model
-            self.save_best_model(model_name=model_name)
+            stop = self.save_best_model(model_name=model_name)
+            if stop:
+                break
 
         #* Update batch norm stats. for SWA model 
         if self.swa:
@@ -225,6 +229,11 @@ class Midline():
             print('Saving best model')
             torch.save(self.model.state_dict(),
                        self.output_path + model_name)
+
+        if self.es.step(torch.tensor([loss1])):
+            return True
+        else:
+            return False
 
     def plot_mask(self, names, pred, img):
         fig, ax = plt.subplots(1, 1, figsize=(10, 10))

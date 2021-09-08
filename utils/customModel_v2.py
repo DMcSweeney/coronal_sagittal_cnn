@@ -103,6 +103,9 @@ class customSiameseUNet(nn.Module):
         return torch.unsqueeze(sharpened_heatmaps, dim=-1)
 
 
+##** --------------------------------------------------CUSTOM UNET --------------------------------------
+
+
 class customUNet(nn.Module):
     def __init__(self, n_outputs, classifier=False, input_size=(512,512)):
         """
@@ -125,7 +128,7 @@ class customUNet(nn.Module):
             encoder_weights="imagenet",
             encoder_depth=5,
             in_channels=3,
-            classes=1,
+            classes=n_outputs,
             aux_params=self.aux_params,
             decoder_channels=tuple(self.decoder_channels)
         )

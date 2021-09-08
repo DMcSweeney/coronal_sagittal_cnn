@@ -101,13 +101,9 @@ def post_projection(img, new_spacing, output_shape=(626, 452)):
     """
     Post-processing for projections, resample to isotropic grid and make standardised shape
     """
-    print(img.GetSize(), output_shape)
-    if img.GetSize() != output_shape:
-        resampled_img, scale = resample(img, new_spacing)
-        padded_img, padding = pad_image(resampled_img, output_shape)
-        return padded_img, scale, padding
-    else:
-        return img, (1, 1), (0, 0)
+    resampled_img, scale = resample(img, new_spacing)
+    padded_img, padding = pad_image(resampled_img, output_shape)
+    return padded_img, scale, padding
 
 def plot_projection(img, name, path):
     #! Transpose needed to plot them in correct orient.
@@ -177,7 +173,6 @@ def vxl_read_dicom(filenames):
 
     count = Counter(slice_thickness)
     if len(count.keys()) == 2: #! Find calibration slice + remove
-        print(count)
         for key, val in count.items():
             if val == 1:
                 idx = slice_thickness.index(key)
@@ -229,12 +224,9 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), 
             print(name)
         else:
             continue
-        # if f'{name}_kj' not in points.index.to_list():
-        #     continue
         reader = sitk.ImageSeriesReader()
         dcm_paths = reader.GetGDCMSeriesFileNames(root)
-        # Remove tester slice
-        #! dcm_names = sorted([path for path in dcm_paths if not path.endswith(calibration)]) # Skip these as they tend to for calibration 
+        
         dcm_names = sorted([path for path in dcm_paths])
         if len(dcm_names) <= 1:
             print('No Dicom files found, skipping directory')
@@ -246,51 +238,36 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), 
             issue_list.append(name)
             continue
 
-
-        print(volume.shape)
         if calib_idx is not None:
             del dcm_names[calib_idx]
         
         reader.SetFileNames(dcm_names)
         print(f'Reading {name} - {len(dcm_names)} dcm files detected')
-        #! Get Pixel spacing from 3D volume but read slice by slice (to match VXL)
         
+        #* Get Pixel spacing from 3D volume but read slice by slice (to match VXL)
         meta = reader.Execute()
         direction_list.append(meta.GetDirection())
         origin_list.append(meta.GetOrigin())
-        print(volume.shape)
         out_img = sitk.GetImageFromArray(np.squeeze(volume))
         out_img.SetSpacing(meta.GetSpacing())
         out_img.SetOrigin(meta.GetOrigin())
         out_img.SetDirection(meta.GetDirection())
-        print(out_img.GetSize())
+        #* Get spacing
         if min_pix is None:
             min_pix = min(meta.GetSpacing())
-        # Paul's data needs rotating
-        
-        # data_block = sitk.GetArrayViewFromImage(meta)
-        # data_block = np.rot90(np.flip(data_block, axis=0), k=3, axes=(0, 1))
-        
-        # img = sitk.GetImageFromArray(data_block)
-        # SITK reorders dimensions so need to account for this when defining spacing
-        # orig_spacing = list(out_img.GetSpacing())
-        # print(orig_spacing, out_img.GetSize())
-        # ordered_spacing = orig_spacing[[0, 2, 1]]
-        # out_img.SetSpacing(ordered_spacing)
         new_spacing = (min_pix, min_pix)
         
-        # WL normalisation
+        #* WL normalisation
         bone_norm_img = WL_norm(out_img, window=1000, level=700)
         tissue_norm_img = WL_norm(out_img, window=600, level=200)
 
-        # Projections
+        #* Projections
         mip = maximum_projection(bone_norm_img, dim=dim)
         avg = average_projection(tissue_norm_img, dim=dim)
         avg = normalize(avg)
         std = standard_deviation(tissue_norm_img, dim=dim)
         std = normalize(std)
-        print(mip.GetSize())
-        # Resample projections to isotropic voxel size
+        #* Resample projections to isotropic voxel size
         if 'coronal' in output_dir:
             padded_mip, scale, padding = post_projection(mip[0], new_spacing, output_shape)
             padded_avg, _,  _ = post_projection(avg[0], new_spacing, output_shape)
@@ -304,7 +281,6 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), 
                 std[:,:, 0], new_spacing, output_shape)
         else:
             raise ValueError
-
 
         name_list.append(name)
         padding_list.append(tuple(padding))
@@ -331,7 +307,7 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), 
             print('Writing projections to npy')
             images = (padded_mip, padded_avg, padded_std)
             write_threeChannel(images, name, output_dir + 'all_projections/', output_shape)
-                    
+
     # with open('./dicom_direction.csv', 'w') as f:
     #     print('Writing directions to CSV')
     #     wrt = csv.writer(f, dialect='excel')
@@ -356,6 +332,6 @@ def main(min_pix=None, dim=0, plot=False, write=False, output_shape=(512, 512), 
 
 if __name__ == '__main__':
     data_dir = '/data/CT_volumes/images/'
-    output_dir = '/data/PAB_data/images_coronal/'  # ! Set dim =0
-    #output_dir ='./images_sagittal/' #! Set dim = 2
-    main(min_pix=4*0.3125, dim=0, plot=True, write=True, save_volumes=True)
+    #output_dir = '/data/PAB_data/images_coronal/'  # ! Set dim =0
+    output_dir ='./images_sagittal/' #! Set dim = 2
+    main(min_pix=4*0.3125, dim=2, plot=True, write=True, save_volumes=False)

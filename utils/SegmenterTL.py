@@ -26,6 +26,7 @@ import seaborn as sns
 
 import utils.customModel_v2 as cm2
 import utils.customWriter_v2 as cw2
+from utils.customLosses import multi_class_dice, EarlyStopping
 
 
 class Segmenter():
@@ -34,17 +35,20 @@ class Segmenter():
     @params: 
       dir_name = directory name used for splitting tensorboard runs.   
     """
-    def __init__(self, train_dataLoader, val_dataLoader, test_dataLoader, dir_name, device="cuda:0", 
-                    batch_size=4, n_outputs=13, learning_rate=3e-3, num_epochs=200, output_path='./outputs/', model_path=None, SWA=False):
+    def __init__(self, training=None, validation=None, testing=None, dir_name=None, device="cuda:0", 
+                    batch_size=4, n_outputs=13, learning_rate=3e-3, num_epochs=200, output_path='./outputs/', 
+                    model_path=None, SWA=False):
         self.device = torch.device(device)
         torch.cuda.set_device(self.device)
-        self.train_dataLoader = train_dataLoader
-        self.val_dataLoader = val_dataLoader
-        self.test_dataLoader = test_dataLoader
+        self.train_dataLoader = training
+        self.val_dataLoader = validation
+        self.test_dataLoader = testing
         self.model = cm2.customUNet(n_outputs=n_outputs, classifier=False).cuda()
         self.optimizer = Adam(self.model.parameters(), lr=learning_rate)
+        self.es = EarlyStopping(patience=75)
 
-        self.criterion = nn.BCEWithLogitsLoss().cuda()
+        self.criterion = nn.CrossEntropyLoss().cuda()
+        self.dice = multi_class_dice().to(device)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', verbose=True)
         self.num_epochs = num_epochs
         self.writer = cw2.customWriter(log_dir=f'./runs/{dir_name}', batch_size=batch_size, num_classes=n_outputs)
@@ -75,9 +79,11 @@ class Segmenter():
             #~TRAINING
             self.train(epoch=epoch, write2tensorboard=True, writer_interval=20)
             #~ VALIDATION
-            self.validation(epoch=epoch, write2tensorboard=True, writer_interval=10, write_gif=False)
-            #* Save best model
-            self.save_best_model(model_name=model_name)
+            self.validation(epoch=epoch, write2tensorboard=True, writer_interval=1, write_gif=False)
+            #* Save best model + Check early stopping criteria
+            stop = self.save_best_model(model_name=model_name)
+            if stop:
+                break
         
         #* Update batch norm stats. for SWA model
         if self.swa:
@@ -105,12 +111,14 @@ class Segmenter():
         for idx, data in enumerate(tqdm(self.train_dataLoader)):
             #*Load data
             img = data['sag_image'].to(self.device, dtype=torch.float32)
-            mask = data['mask'].to(self.device, dtype=torch.float32)
+            mask = data['mask'].to(self.device, dtype=torch.long)
             self.optimizer.zero_grad() #Reset gradients
-        
             pred_seg = self.model(img)
             #* Loss + Regularisation
-            loss = self.criterion(pred_seg, mask)
+            ce = self.criterion(pred_seg, mask)
+            dsc = self.dice(pred_seg, mask)
+            loss = dsc + ce
+            
             self.writer.train_loss.append(loss.item())
             #* Optimiser step
             loss.backward()
@@ -119,7 +127,7 @@ class Segmenter():
                 # ** Write inputs to tensorboard
                 if epoch % writer_interval ==0  and idx == 0:
                     self.writer.plot_mask(
-                        f'Ground-truth', img=img, prediction=mask)
+                        f'Ground-truth', img=img, prediction=mask[:, np.newaxis])
             
         print('Train Loss:', np.mean(self.writer.train_loss))
         self.writer.add_scalar('Training Loss', np.mean(
@@ -132,19 +140,24 @@ class Segmenter():
             for idx, data in enumerate(tqdm(self.val_dataLoader)):
                 #* Load data
                 img = data['sag_image'].to(self.device, dtype=torch.float32)
-                mask = data['mask'].to(self.device, dtype=torch.float32)
+                mask = data['mask'].to(self.device, dtype=torch.long)
                 pred_seg= self.model(img)
                 
                 #* Loss 
-                val_loss = self.criterion(pred_seg, mask)
+                ce = self.criterion(pred_seg, mask)
+                dsc= self.dice(pred_seg, mask)
+                val_loss = ce+dsc
+                self.writer.ce.append(ce.item())
+                self.writer.dsc.append(dsc.item())
 
                 self.writer.val_loss.append(val_loss.item())
                 
                 if write2tensorboard:
                     #* Write predictions to tensorboard
                     if epoch % writer_interval == 0 and idx==0:
+                        plot_mask = torch.argmax(pred_seg, dim=1, keepdim=True)
                         self.writer.plot_mask(
-                            f'Predicted mask', img=img, prediction=pred_seg)
+                            f'Predicted mask', img=img, prediction=plot_mask, apply_sigmoid=False)
             print('Validation Loss:', np.mean(self.writer.val_loss))
             if self.swa:
                 if epoch > self.swa_start:
@@ -153,6 +166,8 @@ class Segmenter():
             else:
                 self.scheduler.step(np.mean(self.writer.val_loss))
             self.writer.add_scalar('Validation Loss', np.mean(self.writer.val_loss), epoch)
+            self.writer.add_scalar('DSC', np.mean(self.writer.dsc), epoch)
+            self.writer.add_scalar('CE', np.mean(self.writer.ce), epoch)
 
     def inference(self, model_name='best_model.pt', plot_output=False, save_preds=False):
         #~ Model Inference
@@ -175,8 +190,10 @@ class Segmenter():
                 pred_seg = self.model(img)
                
                 if plot_output:
+                    os.makedirs(os.path.join(self.output_path, 'sanity'), exist_ok=True)
                     #* Plot predictions
-                    self.plot_mask(ids, pred_seg, img)
+                    self.plot_mask(ids, torch.argmax(
+                        pred_seg, dim=1, keepdim=True), img)
                 all_ids.append(ids)
                 all_masks.append(pred_seg.cpu().numpy())
 
@@ -192,17 +209,17 @@ class Segmenter():
         else:
             return all_ids, all_masks
 
-    def viz_model(self, output_path='./logs/'):
+    def viz_model(self):
         #~ View model architecture
         print('Vis model')
         input_shape = (4, 3, 512, 256) 
         model = self.model
         #* Create placeholder
         x = Variable(torch.randn(input_shape)).to('cuda')
-        mask, classes = model(x, x)
+        mask = model(x)
         #* Only follow path of coordinates
         graph = make_dot(mask.mean(), params=dict(model.named_parameters()))
-        graph.render(output_path + 'graph.png')
+        graph.render(self.output_path + 'graph.png')
         #summary(model, input_shape)
 
     def write2file(self, array, targets, epoch,output_path='./logs/gifs/'):
@@ -232,8 +249,15 @@ class Segmenter():
             print('Saving best model')
             torch.save(self.model.state_dict(),
             self.output_path + model_name)
+        
+        #~ Early Stopping
+        if self.es.step(torch.tensor([loss1])):
+            return True
+        else:
+            return False
     
     def plot_mask(self, names, pred, img):
+        #~ Plot predictions (sanity check)
         fig, ax = plt.subplots(1, 1, figsize=(10, 10))
         ax.axis('off')
         for idx in np.arange(len(names)):
@@ -243,7 +267,7 @@ class Segmenter():
             img = self.norm_img(img)
             ax.imshow(img)
             ax.imshow(arr[idx], alpha=0.5)
-            fig.savefig(self.output_path + f'masks/{names[idx]}.png')
+            fig.savefig(self.output_path + f'sanity/{names[idx]}.png')
             plt.clf()
         plt.close()
 

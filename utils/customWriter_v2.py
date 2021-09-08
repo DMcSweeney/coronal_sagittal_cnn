@@ -24,6 +24,7 @@ class customWriter(SummaryWriter):
         self.reg = [] #Regulariser
         self.l1 = []
         self.ce = []
+        self.dsc = []
         self.ordered_verts = ['T4', 'T5', 'T6', 'T7', 'T8', 'T9',
                               'T10', 'T11', 'T12', 'L1', 'L2', 'L3', 'L4']
         self.hist_colours = ['r', 'b', 'g', 'c', 'm', 'y', 'orange', 'brown', 'pink', 'purple', 'k', 'gray', 'olive']
@@ -37,7 +38,7 @@ class customWriter(SummaryWriter):
         return (img-img.min())/(img.max()-img.min())
 
     def reset_losses(self):
-        self.train_loss, self.val_loss, self.reg, self.l1, self.ce = [], [], [], [], []
+        self.train_loss, self.val_loss, self.reg, self.l1, self.ce, self.dsc = [], [], [], [], [], []
 
     def plot_inputs(self, title, img, targets=None):
         fig = plt.figure(figsize=(10, 10))
@@ -92,11 +93,13 @@ class customWriter(SummaryWriter):
             ax.legend(loc='upper right')
         self.add_figure(title, fig)
 
-    def plot_mask(self, title, img, prediction):
+    def plot_mask(self, title, img, prediction, apply_sigmoid=True):
         fig = plt.figure(figsize=(10, 10))
         plt.tight_layout()
-        mask = self.sigmoid(prediction).cpu().numpy()
-        prediction = prediction.cpu().numpy()
+        if apply_sigmoid:
+            mask = self.sigmoid(prediction).cpu().numpy()
+        else:
+            mask = prediction.cpu().numpy()
         for idx in np.arange(self.batch_size):
             ax = fig.add_subplot(self.batch_size // 2, self.batch_size // 2, idx+1, label='Inputs')
             plt_img = np.moveaxis(img[idx].cpu().numpy(), 0, -1)
