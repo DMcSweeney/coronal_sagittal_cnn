@@ -1,16 +1,7 @@
-15/03/2020 <br>
+<h1> Series of spine models for vertebral labelling </h1>
 
-Latest spine models, post-estro reset. <br>
-All previous models (shape + appearance & CNNs) are in `/home/donal/PhD/initial_spines/CT_models/` <br>
-CNN attempts  = multi-class segmentation + regression with DSNT. <br>
+<h2> Midline </h2>
+  
+<h2> Segmenter </h2>
 
-
-<h2> Workflow </h2>
-
-`python projections.py` should make MIP, STD and AVG projections - need to change outputs + lines 177-179 depending on coronal or sagittal. <br>
-
-`prepapre_data.ipynb` - notebook for preparing annotations + images for training. (__Will need to be changed__) <br>
-
-`python trainTestValSplit.py`- organise files for training<br>
-
-`python find_midline.py` -> `python detection.py` -> `python locator.py`
+<h2> Labeller </h2>
