@@ -20,7 +20,60 @@ from segmentation_models_pytorch.unet.decoder import DecoderBlock
 
 random.seed(60)
 
+#** --------------------------------------LABEL NET -------------------------
+class labelNet(nn.Module):
+    def __init__(self, n_outputs, classifier=False):
+        super(labelNet, self).__init__()
+        self.input_size = (512, 512)
+        self.decoder_channels = [256, 128, 64, 32, 16]
+        self.decoder_out_channels = [4*x for x in self.decoder_channels]
+        # For classifier at end of segmentation head
+        self.aux_params = dict(
+            pooling='avg',             # one of 'avg', 'max'
+            dropout=0.5,               # dropout ratio, default is None
+            activation=None,      # activation function, default is None
+            classes=n_outputs-1,                 # define number of output labels
+        )
+        # Model
+        self.model = smp.Unet(
+            encoder_name="resnet34",
+            encoder_weights="imagenet",
+            encoder_depth=5,
+            in_channels=3,
+            classes=n_outputs,
+            aux_params=self.aux_params,
+            decoder_channels=tuple(self.decoder_channels)
+        )
 
+        self.encoder = self.model.encoder
+        self.decoder = self.model.decoder
+        self.segmentation_head = self.model.segmentation_head
+        self.heatmap_head = self.model.segmentation_head
+        self.classifier = self.model.classification_head if classifier else None
+        
+        self.heatmap2onedim = nn.Conv2d(
+            14, n_outputs, kernel_size=(1, self.input_size[1]), bias=False)
+
+    def forward(self, x):
+        Z = self.encoder.forward(x) #* Z=latent variable
+        Y = self.decoder.forward(*Z) #* Y=prediction 
+
+        segmentation = self.segmentation_head.forward(Y)
+        heatmap = self.heatmap_head.forward(Y)
+        heatmap = dsntnn.flat_softmax(heatmap)
+        coord_map = self.heatmap2onedim(segmentation * heatmap) #* Hadamard product of segmentation + heatmap
+
+        #* Calculate coordinates
+        norm_map = dsntnn.flat_softmax(coord_map)
+        coords = dsntnn.dsnt(norm_map, normalized_coordinates=True)
+
+        if self.classifier is not None:
+            class_out = self.classifier(Z[-1]) #* Classifier at end of encoder
+            return segmentation, heatmap, coords[:, 1:, 1], class_out
+
+        return segmentation, heatmap, coords[:, 1:, 1]
+
+#** --------------------SIAMESE UNET --------------------
 class customSiameseUNet(nn.Module):
     def __init__(self, n_outputs, input_size=(512,512)):
         """
@@ -120,7 +173,7 @@ class customUNet(nn.Module):
             pooling='avg',             # one of 'avg', 'max'
             dropout=0.5,               # dropout ratio, default is None
             activation=None,      # activation function, default is None
-            classes=n_outputs,                 # define number of output labels
+            classes=n_outputs-1,                 # define number of output labels
         )
         # Model
         self.model = smp.Unet(
@@ -128,7 +181,8 @@ class customUNet(nn.Module):
             encoder_weights="imagenet",
             encoder_depth=5,
             in_channels=3,
-            classes=n_outputs,
+            #classes=n_outputs,
+            classes=1,
             aux_params=self.aux_params,
             decoder_channels=tuple(self.decoder_channels)
         )

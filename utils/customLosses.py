@@ -1,6 +1,7 @@
 """
 Script with modified losses 
 """
+from os import stat
 from torch.autograd import Variable
 import torch.nn.functional as F
 import torch.nn as nn
@@ -46,15 +47,42 @@ class multi_class_dice(nn.Module):
     def __init__(self):
         super().__init__()
 
+    @staticmethod
+    def sigmoid(x):
+        return 1/(1+torch.exp(-x))
+
     def forward(self, pred, target):
         num_classes = pred.size()[1]
         loss = 0
-        dice_pred = F.softmax(pred, dim=1)
+        #dice_pred = F.softmax(pred, dim=1)
+        dice_pred = self.sigmoid(pred)
         for channel in range(num_classes):
             mask = torch.where(target == channel, 1, 0)
             loss += dice_coef_loss(mask, dice_pred[:, channel])
         return loss.mean()/num_classes
 
+
+class FocalLoss(nn.modules.loss._WeightedLoss):
+    def __init__(self, weight=None, gamma=2, reduction='mean', apply_sigmoid=False):
+        super(FocalLoss, self).__init__(weight, reduction=reduction)
+        self.gamma = gamma
+        # weight parameter will act as the alpha parameter to balance class weights
+        self.weight = weight
+        self.apply_sigmoid=apply_sigmoid
+
+    @staticmethod
+    def sigmoid(x):
+        return 1/(1+torch.exp(-x))
+
+    def forward(self, input, target):
+        if self.apply_sigmoid:
+            input = self.sigmoid(input)
+        # ce_loss = F.cross_entropy(
+        #     input, target, reduction=self.reduction, weight=self.weight)
+        ce_loss = F.binary_cross_entropy(input, target, reduction='mean')
+        pt = torch.exp(-ce_loss)
+        focal_loss = ((1 - pt) ** self.gamma * ce_loss).mean()
+        return focal_loss
 
 class EarlyStopping(object):
     def __init__(self, mode='min', min_delta=0, patience=10, percentage=False):

@@ -19,15 +19,11 @@ class customWriter(SummaryWriter):
         super().__init__()
         self.batch_size = batch_size
         self.epoch = epoch
-        self.train_loss = []
-        self.val_loss = []
-        self.reg = [] #Regulariser
-        self.l1 = []
-        self.ce = []
-        self.dsc = []
+        self.losses = {}
         self.ordered_verts = ['T4', 'T5', 'T6', 'T7', 'T8', 'T9',
                               'T10', 'T11', 'T12', 'L1', 'L2', 'L3', 'L4']
-        self.hist_colours = ['r', 'b', 'g', 'c', 'm', 'y', 'orange', 'brown', 'pink', 'purple', 'k', 'gray', 'olive']
+        self.hist_colours = ['r', 'b', 'g', 'c', 'm', 'y', 'orange', 
+        'brown', 'pink', 'purple', 'k', 'gray', 'olive']
 
     @staticmethod
     def sigmoid(x):
@@ -35,10 +31,22 @@ class customWriter(SummaryWriter):
 
     @staticmethod
     def norm_img(img):
-        return (img-img.min())/(img.max()-img.min())
+        if img.shape[-1] == 1:
+            return (img-img.min())/(img.max()-img.min())
+        elif img.shape[-1] == 3:
+            norm_img = []
+            for chan in np.arange(0, 3):
+                norm_img.append(
+                    (img[..., chan]-img[..., chan].min())/(img[..., chan].max()-img[..., chan].min()))
+            return np.stack(norm_img, axis=-1)
 
+    def init_losses(self, keys):
+        for key in keys:
+            self.losses[key] = []
+            
     def reset_losses(self):
-        self.train_loss, self.val_loss, self.reg, self.l1, self.ce, self.dsc = [], [], [], [], [], []
+        for loss in self.losses.keys():
+            self.losses[loss] = []
 
     def plot_inputs(self, title, img, targets=None):
         fig = plt.figure(figsize=(10, 10))
@@ -100,12 +108,13 @@ class customWriter(SummaryWriter):
             mask = self.sigmoid(prediction).cpu().numpy()
         else:
             mask = prediction.cpu().numpy()
+        
+        mask = np.where(mask == 0, np.nan, mask)
         for idx in np.arange(self.batch_size):
             ax = fig.add_subplot(self.batch_size // 2, self.batch_size // 2, idx+1, label='Inputs')
             plt_img = np.moveaxis(img[idx].cpu().numpy(), 0, -1)
             plt_img = self.norm_img(plt_img)
-            ax.imshow(plt_img)
-            
+            ax.imshow(plt_img)  
             ax.imshow(mask[idx, 0], alpha=0.5)
             ax.set_title(
                     'Predicted Mask @ epoch: {} - idx: {}'.format(self.epoch, idx))

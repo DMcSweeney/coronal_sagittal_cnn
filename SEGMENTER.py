@@ -35,6 +35,8 @@ batch_size=4
 n_outputs = 13
 learning_rate = 3e-3
 num_epochs = 500
+classifier= True
+
 
 ENCODER = 'resnet34'
 ENCODER_WEIGHTS = 'imagenet'
@@ -64,35 +66,39 @@ def main():
         args.root_dir, args.fold, args.mode, num_folds=4)
 
     if args.mode =='Training':
+        #~ Training + val loops
         train, test = splitter.split_data()
         # ** Create Dataset for training
         train_dataset = SegmenterDataset(
             *train, pre_processing_fn=pre_processing_fn,
-            transforms=train_transforms, normalise=True)
+            transforms=train_transforms, normalise=True, classifier=classifier)
         valid_dataset = SegmenterDataset(
             *test, pre_processing_fn=pre_processing_fn, 
-            transforms=valid_transforms, normalise=True)
+            transforms=valid_transforms, normalise=True, classifier=classifier)
         # ** Convert to Dataloaders
         train_generator = DataLoader(train_dataset, batch_size=batch_size)
         valid_generator = DataLoader(valid_dataset, batch_size=batch_size)
 
         model = stl.Segmenter(training=train_generator, validation=valid_generator, testing=None,
-                            dir_name='exp1', n_outputs=14, output_path=args.output_dir)
-        model.forward(model_name='vert_segmenter.pt', num_epochs=num_epochs)
+                              dir_name='exp1', n_outputs=14, output_path=args.output_dir, classifier=classifier)
+        model.forward(model_name='vert_segmenter_BCE.pt',
+                      num_epochs=num_epochs)
         #model.train(epoch=0)
         #model.validation(epoch=0)
     
     elif args.mode == 'Inference':
+        #~ Model inference loop
         images, targets = splitter.split_data()
         #* Create dataset for inference
         test_dataset = SegmenterDataset(
             images, targets, pre_processing_fn=pre_processing_fn,
-            transforms=test_transforms, normalise=True)
+            transforms=test_transforms, normalise=True, classifier=classifier)
         #** Convert to dataloader
         test_generator = DataLoader(test_dataset, batch_size=1)
         model = stl.Segmenter(training=None, validation=None, testing=test_generator, 
-                            dir_name='exp1', n_outputs=14, output_path=args.output_dir)
-        model.inference(model_name='vert_segmenter.pt', plot_output=True, save_preds=True)
+                              dir_name='exp1', n_outputs=14, output_path=args.output_dir, classifier=classifier)
+        model.inference(model_name='vert_segmenter_BCE.pt',
+                        plot_output=True, save_preds=True)
     
     else:
         raise ValueError(

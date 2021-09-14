@@ -85,7 +85,7 @@ class Midline():
             self.train(epoch=epoch, write2tensorboard=True, writer_interval=20)
             #~ VALIDATION
             self.validation(epoch=epoch, write2tensorboard=True,
-                            writer_interval=10, write_gif=False)
+                            writer_interval=10)
             #* Save best model
             stop = self.save_best_model(model_name=model_name)
             if stop:
@@ -135,7 +135,7 @@ class Midline():
         self.writer.add_scalar('Training Loss', np.mean(
             self.writer.train_loss), epoch)
 
-    def validation(self, epoch, write2tensorboard=True, writer_interval=10, write_gif=False):
+    def validation(self, epoch, write2tensorboard=True, writer_interval=10):
         #~Validation loop
         with torch.set_grad_enabled(False):
             print('Validation...')
