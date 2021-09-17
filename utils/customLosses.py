@@ -26,7 +26,7 @@ def kl_reg(q, p):
     #* D(P||Q) = P log P/Q 
     #* Add small constant to keep log finite
     unsummed_kl = p *((p+eps).log() - (q+eps).log())
-    return unsummed_kl.sum(-1)
+    return unsummed_kl.sum((-2, -1))
 
 
 def dice_coef(y_true, y_pred, smooth=1):

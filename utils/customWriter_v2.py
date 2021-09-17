@@ -2,6 +2,8 @@
 Custom tensorboard writer class
 """
 import matplotlib
+from numpy.lib.shape_base import dstack
+from tensorboard.compat.proto.summary_pb2 import DATA_CLASS_TENSOR
 matplotlib.use('agg')
 from scipy.special import softmax
 import torchvision
@@ -12,7 +14,7 @@ import torch
 from random import randrange
 import seaborn as sns
 import dsntnn
-
+from einops import rearrange
 
 class customWriter(SummaryWriter):
     def __init__(self, log_dir, batch_size, num_classes, epoch=0):
@@ -20,6 +22,9 @@ class customWriter(SummaryWriter):
         self.batch_size = batch_size
         self.epoch = epoch
         self.losses = {}
+        # self.cmap = sns.cubehelix_palette(
+        #     start=1.5, rot=-1.5, gamma=0.8, as_cmap=True)
+        self.cmap = 'viridis'
         self.ordered_verts = ['T4', 'T5', 'T6', 'T7', 'T8', 'T9',
                               'T10', 'T11', 'T12', 'L1', 'L2', 'L3', 'L4']
         self.hist_colours = ['r', 'b', 'g', 'c', 'm', 'y', 'orange', 
@@ -48,112 +53,83 @@ class customWriter(SummaryWriter):
         for loss in self.losses.keys():
             self.losses[loss] = []
 
-    def plot_inputs(self, title, img, targets=None):
+    def plot_heatmap(self, title, img, heatmap, apply_softmax=True):
         fig = plt.figure(figsize=(10, 10))
         plt.tight_layout()
+        if apply_softmax:
+            heatmap = dsntnn.flat_softmax(heatmap).cpu().numpy()
+        else:
+            heatmap = heatmap.cpu().numpy()
+        img = rearrange(img, 'b c h w -> b h w c')
         for idx in np.arange(self.batch_size):
-            ax = fig.add_subplot(self.batch_size // 2, self.batch_size // 2,
-                                 idx+1, label='Inputs')
-            plt_img = np.moveaxis(img[idx].cpu().numpy(), 0, -1)
-            plt_img = self.norm_img(plt_img)
+            ax = fig.add_subplot(self.batch_size // 2,
+                                 self.batch_size // 2, idx+1, label='Inputs')
+            plt_img = self.norm_img(img[idx].cpu().numpy())
             ax.imshow(plt_img)
-            if targets is not None:
-                coords, verts = targets
-                coords = coords.cpu()
-                coords = dsntnn.normalized_to_pixel_coordinates(
-                    coords[idx], size=plt_img.shape[0])
-                for i in range(len(self.ordered_verts)):
-                    if verts[idx, i] == 1:
-                        y = coords[i]
-                        ax.axhline(y, c='y')
-                        ax.text(0, y-5, self.ordered_verts[i], color='white')
-            ax.set_title(
-                'Input @ epoch: {} - idx: {}'.format(self.epoch, idx))
-        self.add_figure(title, fig)
+            ax.imshow(np.max(heatmap[idx], axis=0), alpha=0.5, cmap=self.cmap)
+            ax.set_title(title)
+        self.add_figure(title, fig, global_step=self.epoch)
 
-    def plot_histogram(self, title, histogram, targets=None, detect=False):
-        fig = plt.figure(figsize=(25, 15))
-        plt.tight_layout()
-        histogram = histogram.cpu().numpy()
-        x = np.linspace(0, histogram.shape[-1], num=histogram.shape[-1])
-        for idx in np.arange(self.batch_size):
-            ax = fig.add_subplot(self.batch_size // 2, self.batch_size // 2,
-                                 idx+1, label='Histograms')
-            if not detect:
-                for channel in range(histogram[idx].shape[0]):
-                    vert = self.ordered_verts[channel]
-                    if targets is not None:
-                        #* Plot target heatmaps
-                        heatmaps, labels = targets
-                        if heatmaps is not None and labels[idx, channel] == 1:
-                            tgt = heatmaps[idx, channel].cpu().numpy()
-                            ax.plot(x, tgt, '-', color=self.hist_colours[channel])
-                        if labels[idx, channel] == 1:
-                            #* Only plot visible levels
-                            data = histogram[idx, channel]
-                            ax.plot(x, data, '--', label=vert, color=self.hist_colours[channel])
-            else:
-                data = histogram[idx, 0]
-                ax.plot(x, data, '-')
-            
-            ax.set_title(
-                'Histogram @ epoch: {} - idx: {}'.format(self.epoch, idx))
-            ax.legend(loc='upper right')
-        self.add_figure(title, fig)
-
-    def plot_mask(self, title, img, prediction, apply_sigmoid=True):
+    def plot_mask(self, title, img, prediction, apply_sigmoid=False):
         fig = plt.figure(figsize=(10, 10))
         plt.tight_layout()
         if apply_sigmoid:
             mask = self.sigmoid(prediction).cpu().numpy()
         else:
             mask = prediction.cpu().numpy()
-        
-        mask = np.where(mask == 0, np.nan, mask)
+        img = rearrange(img, 'b c h w -> b h w c')
         for idx in np.arange(self.batch_size):
             ax = fig.add_subplot(self.batch_size // 2, self.batch_size // 2, idx+1, label='Inputs')
-            plt_img = np.moveaxis(img[idx].cpu().numpy(), 0, -1)
-            plt_img = self.norm_img(plt_img)
-            ax.imshow(plt_img)  
-            ax.imshow(mask[idx, 0], alpha=0.5)
-            ax.set_title(
-                    'Predicted Mask @ epoch: {} - idx: {}'.format(self.epoch, idx))
+            plt_img = self.norm_img(img[idx].cpu().numpy())
+            ax.imshow(plt_img)
+            ax.imshow(mask[idx], alpha=0.5, cmap=self.cmap)
+            ax.set_title(title)
         self.add_figure(title, fig, global_step=self.epoch)
 
-    def plot_prediction(self, title, img, prediction, targets=None, predicted=None):
-        fig = plt.figure(figsize=(10, 10))
-        plt.tight_layout()
-        prediction = prediction.cpu().numpy()
-        
-        for idx in np.arange(self.batch_size):
-            ax = fig.add_subplot(self.batch_size // 2, self.batch_size // 2,
-                                 idx+1, label='Inputs')
-            plt_img = np.moveaxis(img[idx].cpu().numpy(), 0, -1)
-            norm_prediction = dsntnn.normalized_to_pixel_coordinates(
-                prediction[idx], size=plt_img.shape[0])
-            plt_img = self.norm_img(plt_img)
-            ax.imshow(plt_img)
-            for i, coord in enumerate(norm_prediction):
-                if targets is not None:
-                    _, verts = targets
-                    if verts[idx, i] == 1:
-                        ax.axhline(coord, c='w', linestyle='--')
-                        ax.text(512, coord-5, self.ordered_verts[i], color='r')
+    def plot_prediction(self, title, img, prediction, ground_truth, type_, apply_norm=False, coords=None, gt_coords=None):
+        #* Type == ['mask', 'heatmap']
+        fig, ax = plt.subplots(1, 2, figsize=(20, 10))
+        plt.subplots_adjust(wspace=0)
+        if apply_norm:
+            if type_ == 'mask':
+                #! Only for binary masks
+                prediction = self.sigmoid(prediction).cpu().numpy()
+            elif type_ == 'heatmap':
+                prediction = dsntnn.flat_softmax(prediction).cpu().numpy()
+        else:
+            prediction = prediction.cpu().numpy()
 
-            if targets is not None:
-                coords, verts = targets
-                coords = coords.cpu()
-                coords = dsntnn.normalized_to_pixel_coordinates(
-                    coords[idx], size=plt_img.shape[0])
-                for i in range(len(self.ordered_verts)):
-                    if verts[idx, i] == 1:
-                        y = coords[i]
-                        ax.axhline(y, c='y')
-                        ax.text(0, y-5, self.ordered_verts[i], color='white')
-            ax.set_title(
-                'Prediction @ epoch: {} - idx: {}'.format(self.epoch, idx))
-        self.add_figure(title, fig)
+        img = rearrange(img, 'b c h w -> b h w c')
+        idx = 3
+        plt_img = self.norm_img(img[idx].cpu().numpy())
+        ax[0].axis('off')
+        ax[1].axis('off')
+        ax[0].imshow(plt_img[..., 1], cmap='gray')
+        ax[0].set_title('Ground-truth')
+        ax[1].imshow(plt_img[..., 1], cmap='gray')
+        ax[1].set_title('Prediction')
+        if type_ == 'heatmap':
+            ax[0].imshow(
+                np.max(ground_truth[idx].cpu().numpy(), axis=0), alpha=0.5, cmap=self.cmap)
+            ax[1].imshow(np.max(prediction[idx], axis=0), alpha=0.5, cmap=self.cmap)
+        elif type_ == 'mask':
+            gt = np.where(ground_truth[idx].cpu().numpy() == 0, np.nan, ground_truth[idx].cpu().numpy())
+            pred = np.where(np.argmax(prediction[idx], axis=0) == 0, np.nan, np.argmax(
+                prediction[idx], axis=0))
+            ax[0].imshow(gt, alpha=0.5, cmap=self.cmap)
+            ax[1].imshow(pred, alpha=0.5, cmap=self.cmap)
+        if coords is not None:
+            for i, vert in enumerate(self.ordered_verts):
+                y, x = coords[idx, i].cpu().numpy()
+                ax[1].scatter(x, y, marker='+', c='r', s=15)
+                ax[1].text(x, y, vert, c='r', size=15)
+        if gt_coords is not None:
+            for i, vert in enumerate(self.ordered_verts):
+                y, x = gt_coords[idx, i].cpu().numpy()
+                ax[0].scatter(x, y, marker='+', c='r', s=15)
+                ax[0].text(x, y, vert, c='r', size=15)
 
+        self.add_figure(title, fig, global_step=self.epoch)
 
 
 

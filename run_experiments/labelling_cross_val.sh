@@ -8,9 +8,9 @@ python ../LABELLER.py --root_dir /data/PAB_data/vert_labelling/ \
                     --fold ${f} \
                     --mode Training
 
-# python ../LABELLER.py --root_dir /data/PAB_data/vert_labelling/ \
-#                     --output_dir /data/PAB_data/vert_labelling/q${f}/ \
-#                     --fold ${f} \
-#                     --mode Inference
+python ../LABELLER.py --root_dir /data/PAB_data/vert_labelling/ \
+                    --output_dir /data/PAB_data/vert_labelling/q${f}/ \
+                    --fold ${f} \
+                    --mode Inference
                     
 #done

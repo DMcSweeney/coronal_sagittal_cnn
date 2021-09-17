@@ -19,7 +19,7 @@ from einops import rearrange
 
 class LabelDataset(Dataset):
     def __init__(self, img_paths, tgt_paths, pre_processing_fn=None, 
-    transforms=None, normalise=True, classifier=False):
+    transforms=None, normalise=True, classifier=False, norm_coords=False):
         #~Custom dataset for spine models with coronal and sagittal inputs 
         super(LabelDataset, self).__init__()
         
@@ -35,6 +35,7 @@ class LabelDataset(Dataset):
         self.transforms = transforms
         self.normalise = normalise
         self.classifier = classifier
+        self.norm_coords = norm_coords
 
         self.img_size = self.sagittal_inputs['slices'].shape[1:3]
         self.ordered_verts = ['T4', 'T5', 'T6', 'T7', 'T8', 'T9',
@@ -67,7 +68,7 @@ class LabelDataset(Dataset):
             df = pd.read_csv(path)
             data_dict[pid] = {}
             for i, row in df.iterrows():
-                data_dict[pid][row[0]] = row[1]
+                data_dict[pid][row[0]] = (row[1], row[2])
         return data_dict
 
     @staticmethod
@@ -81,7 +82,8 @@ class LabelDataset(Dataset):
         keypoints = []
         for vert in self.ordered_verts:
             if vert in coord_dict.keys():
-                keypoints.append([coord_dict[vert], 226])
+                x, y = coord_dict[vert]
+                keypoints.append([x, y])
             else:
                 keypoints.append([0, 0])
         
@@ -90,16 +92,19 @@ class LabelDataset(Dataset):
         labels = np.array(labels).astype(int)
         return keypoints, labels
 
-    def keypoints2tensor(self, keypoints, size):
+    def keypoints2tensor(self, keypoints, size, norm_coords=False):
         #*Convert into tensor (BxCx1)
         tgt_list = []
         for elem in keypoints:
             y,x = elem
-            coord = torch.tensor(y)
+            coord = torch.tensor([x, y])
             tgt_list.append(coord)
         tensor = torch.stack(tgt_list, dim=0)
         #* Normalise between [-1, 1]
-        return dsntnn.pixel_to_normalized_coordinates(tensor, size=size)
+        if norm_coords:
+            return dsntnn.pixel_to_normalized_coordinates(tensor, size=size)
+        else:
+            return tensor
 
     @staticmethod
     def to_tensor(x, **kwargs):
@@ -157,11 +162,9 @@ class LabelDataset(Dataset):
             #* Pre-processing for using segmentation-models library (w/ pre-trained encoders)
             if self.pre_processing_fn is not None:
                 sag_prep = self.pre_processing_fn(image=img, mask=mask)
-                heatmap_prep = self.pre_processing_fn(image=img, mask=heatmap)
                 img, mask = sag_prep.values()
-                _, heatmap = heatmap_prep.values()
             #* Convert keypoints to tensor
-            keypoints = self.keypoints2tensor(keypoints, size=512)
+            keypoints = self.keypoints2tensor(keypoints, size=512, norm_coords=self.norm_coords)
             #* Convert list of labels to tensor
             labels = torch.stack([torch.tensor(elem) for elem in labels], dim=0)
             #~Prepare sample
@@ -435,25 +438,28 @@ class k_fold_splitter():
             raise ValueError(
                 "Unspecificied mode, should be one of 'Training, Inference'")
 
-
     def inference_split(self):
         #~ Go through testing fold and return relevant filepaths
         #* Prepare dictionaries
         img_dict = {file.split('.')[0]: {} for root, dirs, files in os.walk(
-            self.root) for file in files if f'q{self.test_fold}' not in root}
+            self.root) for file in files if f'q{self.test_fold}' in root and file.endswith(('.npy', '.csv'))}
         tgt_dict = {file.split('.')[0]: {} for root, dirs, files in os.walk(
-            self.root) for file in files if f'q{self.test_fold}' not in root}
+            self.root) for file in files if f'q{self.test_fold}' in root and file.endswith(('.npy', '.csv'))}
         
         for root, dirs, files in os.walk(self.root):
             if files and f'q{self.test_fold}' in root:
                 if 'slices' in root:
                     for file in files:
-                        name = file.split('.')[0]
-                        img_dict[name] = os.path.join(root, file)
+                        if file.endswith(('.npy', '.csv')):
+                            name = file.split('.')[0]
+                            sub_folder = root.split('/')[-1]
+                            img_dict[name][sub_folder] = os.path.join(root, file)
                 elif 'targets' in root:
                     for file in files:
-                        name = file.split('.')[0]
-                        tgt_dict[name] = os.path.join(root, file)
+                        if file.endswith(('.npy', '.csv')):
+                            name = file.split('.')[0]
+                            sub_folder = root.split('/')[-1]
+                            tgt_dict[name][sub_folder] = os.path.join(root, file)
                 else:
                     continue
         assert len(img_dict.keys()) != 0 and len(tgt_dict.keys()) !=0, 'Issue with directory structure'
@@ -470,14 +476,16 @@ class k_fold_splitter():
             if files and f'q{self.test_fold}' not in root:
                 if 'slices' in root:
                     for file in files:
-                        name = file.split('.')[0]
-                        sub_folder = root.split('/')[-1]
-                        img_dict[name][sub_folder] = os.path.join(root, file)
+                        if file.endswith(('.npy', '.csv')):
+                            name = file.split('.')[0]
+                            sub_folder = root.split('/')[-1]
+                            img_dict[name][sub_folder] = os.path.join(root, file)
                 elif 'targets' in root:
                     for file in files:
-                        name = file.split('.')[0]
-                        sub_folder = root.split('/')[-1]
-                        tgt_dict[name][sub_folder] = os.path.join(root, file)
+                        if file.endswith(('.npy', '.csv')):
+                            name = file.split('.')[0]
+                            sub_folder = root.split('/')[-1]
+                            tgt_dict[name][sub_folder] = os.path.join(root, file)
                 else:
                     continue
         assert len(img_dict.keys()) != 0 and len(tgt_dict.keys()) !=0, 'Issue with directory structure'
@@ -497,7 +505,6 @@ class k_fold_splitter():
         np.random.seed(seed=self.seed)
         indices = np.random.rand(len(ids)).argsort()
         train_size = int(len(ids)*self.train_test_ratio)
-        print(train_size, len(ids), len(indices))
         train_ids = np.array(ids)[indices[:train_size]]
         test_ids = np.array(ids)[indices[train_size:]]
         print(f'Training: {len(train_ids)}; Testing: {len(test_ids)}')

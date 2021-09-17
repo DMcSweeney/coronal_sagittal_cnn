@@ -33,8 +33,10 @@ args = parser.parse_args()
 batch_size=4
 n_outputs = 13
 learning_rate = 3e-3
-num_epochs = 200
-classifier=False
+num_epochs = 500
+classifier=True
+norm_coords=True
+early_stopping=True
 
 ENCODER = 'resnet34'
 ENCODER_WEIGHTS = 'imagenet'
@@ -72,16 +74,18 @@ def main():
         # ** Create Dataset for training
         train_dataset = LabelDataset(
             *train, pre_processing_fn=pre_processing_fn,
-            transforms=train_transforms, normalise=True, classifier=classifier)
+            transforms=train_transforms, normalise=True, classifier=classifier, 
+            norm_coords=norm_coords)
         valid_dataset = LabelDataset(
             *test, pre_processing_fn=pre_processing_fn,transforms=valid_transforms, 
-            normalise=True, classifier=classifier)
+            normalise=True, classifier=classifier, norm_coords=norm_coords)
         # ** Convert to Dataloaders
         train_generator = DataLoader(train_dataset, batch_size=batch_size)
         valid_generator = DataLoader(valid_dataset, batch_size=batch_size)
 
         model = ltl.Labeller(training=train_generator, validation=valid_generator, testing=None,
-                              dir_name='exp1', n_outputs=14, output_path=args.output_dir, classifier=classifier)
+                              dir_name='exp1', n_outputs=14, output_path=args.output_dir, 
+                              classifier=classifier, norm_coords=norm_coords, early_stopping=early_stopping)
         model.forward(model_name='labeller.pt',
                       num_epochs=num_epochs)
         #model.train(epoch=0)
@@ -93,11 +97,12 @@ def main():
         #* Create dataset for inference
         test_dataset = LabelDataset(
             images, targets, pre_processing_fn=pre_processing_fn,
-            transforms=test_transforms, normalise=True, classifier=classifier)
+            transforms=test_transforms, normalise=True, classifier=classifier, norm_coords=norm_coords)
         #** Convert to dataloader
         test_generator = DataLoader(test_dataset, batch_size=1)
         model = ltl.Labeller(training=None, validation=None, testing=test_generator,
-                              dir_name='exp1', n_outputs=14, output_path=args.output_dir, classifier=classifier)
+                             dir_name='exp1', n_outputs=14, output_path=args.output_dir, 
+                             classifier=classifier, norm_coords=norm_coords)
         model.inference(model_name='labeller.pt',
                         plot_output=True, save_preds=True)
 
