@@ -18,6 +18,7 @@ from torch.quantization import QuantStub, DeQuantStub
 from torchvision.models.resnet import BasicBlock
 from segmentation_models_pytorch.unet.decoder import DecoderBlock
 from utils.modules import ResidualBlock
+from einops import rearrange
 
 random.seed(60)
 
@@ -49,13 +50,15 @@ class labelNet(nn.Module):
         self.encoder = self.model.encoder
         self.decoder = self.model.decoder
         self.segmentation_head = self.model.segmentation_head
-        self.heatmap_head = ResidualBlock(in_channels=16, out_channels=14, kernel_size=1)
+        self.heatmap_head = ResidualBlock(in_channels=16, out_channels=14, kernel_size=1, 
+                    downsample=nn.Conv2d(in_channels=16, out_channels=14, kernel_size=1, stride=1))
         self.classifier = self.model.classification_head if classifier else None
         self.norm_coords = norm_coords
         self.heatmap2onedim = nn.Conv2d(
             14, n_outputs, kernel_size=(1, self.input_size[1]), bias=False)
 
-        self.basic_block = ResidualBlock(in_channels=14, out_channels=13, kernel_size=1)
+        self.basic_block = ResidualBlock(in_channels=13, out_channels=13, kernel_size=1,
+                                         downsample=nn.Conv2d(in_channels=13, out_channels=13, kernel_size=1, stride=1))
 
     @staticmethod
     def sharpen_heatmaps(heatmaps, alpha):
@@ -67,23 +70,42 @@ class labelNet(nn.Module):
     def sigmoid(x):
         return 1/(1+torch.exp(-x))
 
-    def forward(self, x):
+    def forward(self, x, writer=None):
         Z = self.encoder.forward(x) #* Z=latent variable
         Y = self.decoder.forward(*Z) #* Y=prediction 
 
-        segmentation = self.segmentation_head.forward(Y)
-        heatmap = self.heatmap_head.forward(Y)
-        
-        norm_map = self.basic_block.forward(heatmap * self.sigmoid(segmentation))
-        #norm_map = self.sharpen_heatmaps(norm_map, alpha=2)
-        norm_map = dsntnn.flat_softmax(norm_map)
-        coords = dsntnn.dsnt(norm_map, normalized_coordinates=self.norm_coords)
-
         if self.classifier is not None:
-            class_out = self.classifier(Z[-1]) #* Classifier at end of encoder
-            return segmentation, heatmap, coords, class_out
+            # * Classifier at end of encoder
+            class_out = self.classifier(Z[-1])
 
-        return segmentation, dsntnn.flat_softmax(heatmap), coords
+        segmentation = self.segmentation_head.forward(Y)
+        heatmap = self.heatmap_head.forward(Y)  
+        #* Element-wise prod. of mask + heatmap
+        map_ = F.softmax(segmentation, dim=1)*heatmap #* Softmax along channel axis
+        if writer is not None:
+            ...
+            # writer.plot_prediction(f'H x S', img=x, prediction=map_, type_='heatmap', ground_truth=None,apply_norm=True)
+            # writer.plot_prediction(f'Sigmoid mask', img=x, prediction=F.softmax(segmentation, dim=1), 
+            #                             type_='heatmap', ground_truth=None, apply_norm=False)
+
+        #* Reshape arrays
+        map_ = rearrange(map_[:, 1:], 'b c h w -> b c (h w)') #* Ignore background
+        #* Filter out channels based on classifier
+        class_map = self.sigmoid(class_out[..., None])*map_
+        class_map = rearrange(class_map, 'b c (h w) -> b c h w', h=512, w=512)
+
+        norm_map = self.basic_block.forward(class_map)
+        norm_map = self.sharpen_heatmaps(norm_map, alpha=2)
+        #norm_map = dsntnn.flat_softmax(norm_map)
+        if writer is not None:
+            ...
+        #     writer.plot_prediction('Coordinate map', img=x, prediction=norm_map, type_='heatmap', 
+        #     ground_truth=None, apply_norm=False)
+        coords = dsntnn.dsnt(norm_map, normalized_coordinates=self.norm_coords)
+        if self.classifier:
+            return segmentation, class_map, coords, class_out
+
+        return segmentation, class_map, coords
 
 #** --------------------SIAMESE UNET --------------------
 class customSiameseUNet(nn.Module):

@@ -176,6 +176,8 @@ class LabelDataset(Dataset):
             #* Convert keypoints to tensor
             keypoints = self.keypoints2tensor(keypoints, size=512, norm_coords=self.norm_coords)
             #* 
+            print('YEET')
+            print(self.transforms)
             #~Prepare sample
             sample = {'image': img, 
                 'mask': torch.squeeze(mask),

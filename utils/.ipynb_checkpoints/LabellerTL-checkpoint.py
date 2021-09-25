@@ -151,23 +151,19 @@ class Labeller():
             keypoints, labels = data['keypoints'].to(self.device, dtype=torch.float32), \
                 data['labels'].to(self.device, dtype=torch.float32)
             self.optimizer.zero_grad() #* Reset gradients
-
-            #* Sharpen heatmap
-            heatmap = self.writer.sharpen_heatmap(heatmap)
             if self.classifier:
                 pred_seg, pred_heatmap, pred_coords, pred_labels = self.model(img)
                 bce = self.bce(pred_labels, labels)
             else:
                 pred_seg, pred_heatmap, pred_coords = self.model(img)
-
             #* Losses
             ce = self.ce(pred_seg, mask)
-            kl = self.kl(pred_heatmap[:, 1:], heatmap[:, 1:])
+            kl = self.kl(pred_heatmap[:, 1:], heatmap)
             kl = dsntnn.average_loss(kl, mask=labels)
             mse = self.mse(pred_coords, keypoints)
             mse = dsntnn.average_loss(mse, mask=labels)
-            loss = ce*self.ce_weight + kl*self.kl_weight + mse*self.mse_weight
-            #loss = kl*self.kl_weight + mse*self.mse_weight
+            #loss = ce*self.ce_weight + kl*self.kl_weight + mse*self.mse_weight
+            loss = kl*self.kl_weight + mse*self.mse_weight
             if self.classifier:
                 loss += bce
             self.writer.losses['train_loss'].append(loss.item())
@@ -197,9 +193,6 @@ class Labeller():
                 heatmap = data['heatmap'].to(self.device, dtype=torch.float32)
                 keypoints, labels = data['keypoints'].to(
                     self.device, dtype=torch.float32), data['labels'].to(self.device, dtype=torch.float32)
-
-                #* Sharpen heatmap
-                heatmap = self.writer.sharpen_heatmap(heatmap)
                 if self.classifier:
                     pred_seg, pred_heatmap, pred_coords, pred_labels = self.model(
                         img, writer=self.writer)
@@ -208,13 +201,13 @@ class Labeller():
                     pred_seg, pred_heatmap, pred_coords = self.model(img)
                 #* Losses
                 ce = self.ce(pred_seg, mask)
-                kl = self.kl(pred_heatmap[:, 1:], heatmap[:, 1:])
+                kl = self.kl(pred_heatmap[:, 1:], heatmap)
                 kl = dsntnn.average_loss(kl, mask=labels)
                 mse = self.mse(pred_coords, keypoints)
                 mse = dsntnn.average_loss(mse, mask=labels)
 
-                loss = ce*self.ce_weight + kl*self.kl_weight + mse*self.mse_weight
-                #loss = kl*self.kl_weight + mse*self.mse_weight
+                #loss = ce*self.ce_weight + kl*self.kl_weight + mse*self.mse_weight
+                loss = kl*self.kl_weight + mse*self.mse_weight
                 if self.classifier:
                     loss += bce * self.bce_weight
                     self.writer.losses['bce'].append(bce.item())

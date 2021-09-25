@@ -37,7 +37,7 @@ num_epochs = 500
 classifier=True
 norm_coords=True
 early_stopping=True
-remove_invisible=False
+remove_invisible=True
 
 ENCODER = 'resnet34'
 ENCODER_WEIGHTS = 'imagenet'
@@ -46,8 +46,8 @@ def main():
     #~Pre-processing + training 
     # ** Create albumentation transforms - train + val + test
     train_transforms = A.Compose([#A.HorizontalFlip(p=0.5),
-            A.ShiftScaleRotate(scale_limit=0.3, rotate_limit=10,
-                                 shift_limit=0.1, p=1, border_mode=0),
+            A.ShiftScaleRotate(scale_limit=0.2, rotate_limit=20,
+                                 shift_limit=0.3, p=1, border_mode=0),
             #A.GaussNoise(var_limit=0.025, p=0.5, per_channel=False),
             #A.Perspective(p=0.5),
             A.RandomCrop(height=342, width=512, p=0.5),

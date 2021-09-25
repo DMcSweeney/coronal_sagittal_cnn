@@ -45,14 +45,6 @@ class customWriter(SummaryWriter):
                     (img[..., chan]-img[..., chan].min())/(img[..., chan].max()-img[..., chan].min()))
             return np.stack(norm_img, axis=-1)
 
-    @staticmethod
-    def sharpen_heatmap(heatmap, alpha=2):
-        sharp_map = heatmap ** alpha
-        eps = 1e-24
-        flat_map = sharp_map.flatten(2).sum(-1)[..., None, None]
-        flat_map += eps
-        return sharp_map/flat_map
-
     def init_losses(self, keys):
         for key in keys:
             self.losses[key] = []
@@ -64,7 +56,6 @@ class customWriter(SummaryWriter):
     def plot_heatmap(self, title, img, heatmap, apply_softmax=True, norm_coords=False, labels=None):
         fig = plt.figure(figsize=(10, 10))
         plt.tight_layout()
-        heatmap = self.sharpen_heatmap(heatmap, alpha=2)
         if apply_softmax:
             heatmap = dsntnn.flat_softmax(heatmap).cpu().numpy()
         else:
@@ -75,13 +66,13 @@ class customWriter(SummaryWriter):
             ax = fig.add_subplot(self.batch_size // 2,
                                  self.batch_size // 2, idx+1, label='Inputs')
             plt_img = self.norm_img(img[idx].cpu().numpy())
-            ax.imshow(plt_img, cmap='gray')
+            #ax.imshow(plt_img, cmap='gray')
             coords = dsntnn.dsnt(
                 torch.tensor(heatmap), normalized_coordinates=norm_coords)
+            print('HERE', coords)
             if norm_coords:
                 coords = dsntnn.normalized_to_pixel_coordinates(coords, size=(512, 512))
                 print(coords[0])
-
             for channel in range(coords.shape[1]):
                 x, y = coords[idx, channel]
                 if channel == 0:
@@ -94,10 +85,10 @@ class customWriter(SummaryWriter):
             plt_heatmap = np.max(heatmap[idx], axis=0)
             #plt_heatmap = np.where(plt_heatmap == 0, np.nan, plt_heatmap)
             #ax.imshow(plt_heatmap, alpha=0.5, cmap=self.cmap)
-            ax.imshow(plt_heatmap, cmap=cmap, alpha=0.5)
+            ax.imshow(plt_heatmap, cmap=cmap)
             ax.set_title(title)
-        #fig.savefig('../outputs/heatmap_test.png')
-        self.add_figure(title, fig, global_step=self.epoch)
+        fig.savefig('../outputs/heatmap_test.png')
+        #self.add_figure(title, fig, global_step=self.epoch)
 
     def plot_mask(self, title, img, prediction, apply_sigmoid=False):
         fig = plt.figure(figsize=(10, 10))
@@ -120,10 +111,6 @@ class customWriter(SummaryWriter):
         #* Type == ['mask', 'heatmap']
         fig, ax = plt.subplots(1, 2, figsize=(20, 10))
         plt.subplots_adjust(wspace=0)
-
-        # if type_ == 'heatmap':
-        #     prediction = self.sharpen_heatmap(prediction, alpha=2)
-
         if apply_norm:
             if type_ == 'mask':
                 #! Only for binary masks
