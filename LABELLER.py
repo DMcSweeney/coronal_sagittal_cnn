@@ -30,13 +30,13 @@ parser.add_argument('--mode', help='training/inference',
                     type=str, default='inference')
 args = parser.parse_args()
 
-batch_size=4
+batch_size=8
 n_outputs = 13
 learning_rate = 3e-3
 num_epochs = 500
 classifier=True
 norm_coords=True
-early_stopping=True
+early_stopping=False
 remove_invisible=False
 
 ENCODER = 'resnet34'
@@ -53,17 +53,17 @@ def main():
             A.RandomCrop(height=342, width=512, p=0.5),
             A.Resize(height=512, width=512)
             ], 
-        keypoint_params=A.KeypointParams(format=('yx'), label_fields=[
+        keypoint_params=A.KeypointParams(format=('xy'), label_fields=[
                                          'labels'], remove_invisible=remove_invisible),
         additional_targets={'heatmap': 'mask'})
 
     valid_transforms = A.Compose([A.Resize(height=512, width=512)],
                                  keypoint_params=A.KeypointParams(
-                                     format='yx', remove_invisible=remove_invisible, label_fields=['labels']),
+                                     format='xy', remove_invisible=remove_invisible, label_fields=['labels']),
                                  additional_targets={'heatmap': 'mask'})
 
     test_transforms = A.Compose([A.Resize(height=512, width=512)],
-        keypoint_params=A.KeypointParams(format='yx', remove_invisible=remove_invisible, label_fields=['labels']), 
+        keypoint_params=A.KeypointParams(format='xy', remove_invisible=remove_invisible, label_fields=['labels']), 
         additional_targets={'heatmap': 'mask'})
 
     #** Pre-processing functions

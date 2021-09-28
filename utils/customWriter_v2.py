@@ -15,6 +15,7 @@ from random import randrange
 import seaborn as sns
 import dsntnn
 from einops import rearrange
+import torch.nn.functional as F
 
 class customWriter(SummaryWriter):
     def __init__(self, log_dir, batch_size, num_classes, epoch=0):
@@ -80,7 +81,6 @@ class customWriter(SummaryWriter):
                 torch.tensor(heatmap), normalized_coordinates=norm_coords)
             if norm_coords:
                 coords = dsntnn.normalized_to_pixel_coordinates(coords, size=(512, 512))
-                print(coords[0])
 
             for channel in range(coords.shape[1]):
                 x, y = coords[idx, channel]
@@ -121,17 +121,14 @@ class customWriter(SummaryWriter):
         fig, ax = plt.subplots(1, 2, figsize=(20, 10))
         plt.subplots_adjust(wspace=0)
 
-        # if type_ == 'heatmap':
-        #     prediction = self.sharpen_heatmap(prediction, alpha=2)
+        pred_coords = dsntnn.dsnt(prediction, normalized_coordinates=False) if type_ == 'heatmap' else None
 
         if apply_norm:
             if type_ == 'mask':
                 #! Only for binary masks
-                prediction = self.sigmoid(prediction).cpu().numpy()
-                if labels is not None:
-                    labels = self.sigmoid(labels).cpu().numpy()
-                    labels = np.where(labels > 0.5, 1, 0)
-                    print(labels)
+                prediction = F.softmax(prediction, dim=1).cpu().numpy()
+                #prediction = self.sigmoid(prediction).cpu().numpy()
+                
             elif type_ == 'heatmap':
                 prediction = dsntnn.flat_softmax(prediction).cpu().numpy()
                 if labels is not None:
@@ -141,6 +138,11 @@ class customWriter(SummaryWriter):
         else:
             prediction = prediction.cpu().numpy()
 
+        if labels is not None:
+            labels = self.sigmoid(labels).cpu().numpy()
+            labels = np.where(labels > 0.5, 1, 0)
+            print(labels)
+            
         img = rearrange(img, 'b c h w -> b h w c')
         idx = 0
         plt_img = self.norm_img(img[idx].cpu().numpy())
@@ -155,6 +157,15 @@ class customWriter(SummaryWriter):
                 ax[0].imshow(
                     np.max(ground_truth[idx].cpu().numpy(), axis=0), alpha=0.5, cmap=self.cmap)
             ax[1].imshow(np.max(prediction[idx], axis=0), alpha=0.5, cmap=self.cmap)
+            #* Plot coordinates according to heatmap
+            if pred_coords is not None:
+                for i, vert in enumerate(self.ordered_verts):
+                    if labels is not None and labels[idx, i] == 0:
+                        continue
+                    x, y = pred_coords[idx, i].cpu().numpy()[::-1]
+                    ax[1].scatter(x, y, marker='^', c='g', s=15)
+                    ax[1].text(x, y, vert, c='g', size=15)
+
         elif type_ == 'mask':
             if ground_truth is not None:
                 gt = np.where(ground_truth[idx].cpu().numpy() == 0, np.nan, ground_truth[idx].cpu().numpy())
@@ -165,12 +176,12 @@ class customWriter(SummaryWriter):
         if coords is not None:
             for i, vert in enumerate(self.ordered_verts):
                 if labels is not None and labels[idx, i] == 0: continue
-                y, x = coords[idx, i].cpu().numpy()
+                x, y = coords[idx, i].cpu().numpy()[::-1]
                 ax[1].scatter(x, y, marker='+', c='r', s=15)
                 ax[1].text(x, y, vert, c='r', size=15)
         if gt_coords is not None:
             for i, vert in enumerate(self.ordered_verts):
-                y, x = gt_coords[idx, i].cpu().numpy()
+                x, y = gt_coords[idx, i].cpu().numpy()[::-1]
                 ax[0].scatter(x, y, marker='+', c='r', s=15)
                 ax[0].text(x, y, vert, c='r', size=15)
 

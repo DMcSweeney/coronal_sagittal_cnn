@@ -61,10 +61,12 @@ class labelNet(nn.Module):
                                          downsample=nn.Conv2d(in_channels=13, out_channels=13, kernel_size=1, stride=1))
 
     @staticmethod
-    def sharpen_heatmaps(heatmaps, alpha):
-        sharpened_heatmaps = heatmaps ** alpha
-        #sharpened_heatmaps /= sharpened_heatmaps.flatten(2).sum(-1)
-        return sharpened_heatmaps
+    def sharpen_heatmap(heatmap, alpha=2):
+        sharp_map = heatmap ** alpha
+        eps = 1e-24
+        flat_map = sharp_map.flatten(2).sum(-1)[..., None, None]
+        flat_map += eps
+        return sharp_map/flat_map
 
     @staticmethod
     def sigmoid(x):
@@ -79,7 +81,8 @@ class labelNet(nn.Module):
             class_out = self.classifier(Z[-1])
 
         segmentation = self.segmentation_head.forward(Y)
-        heatmap = self.heatmap_head.forward(Y)  
+        heatmap = self.heatmap_head.forward(Y) 
+        heatmap = F.relu(heatmap) 
         #* Element-wise prod. of mask + heatmap
         map_ = F.softmax(segmentation, dim=1)*heatmap #* Softmax along channel axis
         if writer is not None:
@@ -88,24 +91,29 @@ class labelNet(nn.Module):
             # writer.plot_prediction(f'Sigmoid mask', img=x, prediction=F.softmax(segmentation, dim=1), 
             #                             type_='heatmap', ground_truth=None, apply_norm=False)
 
-        #* Reshape arrays
+        # #* Reshape arrays
         map_ = rearrange(map_[:, 1:], 'b c h w -> b c (h w)') #* Ignore background
         #* Filter out channels based on classifier
         class_map = self.sigmoid(class_out[..., None])*map_
         class_map = rearrange(class_map, 'b c (h w) -> b c h w', h=512, w=512)
 
         norm_map = self.basic_block.forward(class_map)
-        norm_map = self.sharpen_heatmaps(norm_map, alpha=2)
-        #norm_map = dsntnn.flat_softmax(norm_map)
+        norm_map = F.relu(norm_map)
+        # #norm_map = self.sigmoid(norm_map)
+        # print(map_[:, 1:].shape, norm_map.shape)
+        #norm_map = dsntnn.flat_softmax(map_[:, 1:].contiguous())
+        norm_map = self.sharpen_heatmap(norm_map, alpha=2)
+        
         if writer is not None:
             ...
         #     writer.plot_prediction('Coordinate map', img=x, prediction=norm_map, type_='heatmap', 
         #     ground_truth=None, apply_norm=False)
+
         coords = dsntnn.dsnt(norm_map, normalized_coordinates=self.norm_coords)
         if self.classifier:
-            return segmentation, class_map, coords, class_out
+            return segmentation, norm_map, coords, class_out
 
-        return segmentation, class_map, coords
+        return segmentation, norm_map, coords
 
 #** --------------------SIAMESE UNET --------------------
 class customSiameseUNet(nn.Module):

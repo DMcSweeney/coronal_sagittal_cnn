@@ -54,13 +54,13 @@ class Labeller():
 
         #* Losses 
         self.ce = nn.CrossEntropyLoss().cuda()
-        self.ce_weight = 10
+        self.ce_weight = 0
         self.mse = dsntnn.euclidean_losses
-        self.mse_weight = 1
+        self.mse_weight = 50
         self.kl = kl_reg
-        self.kl_weight = 0.1
-        self.bce = nn.BCEWithLogitsLoss().to(device) if classifier else None
-        self.bce_weight = 1
+        self.kl_weight = 1
+        self.bce = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([2])).to(device) if classifier else None
+        self.bce_weight = 5
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', verbose=True, patience=30)
 
         self.writer = cw2.customWriter(
@@ -115,7 +115,7 @@ class Labeller():
             #~TRAINING
             self.train(epoch=epoch, write2tensorboard=True, writer_interval=20)
             #~ VALIDATION
-            self.validation(epoch=epoch, write2tensorboard=True, writer_interval=1, write_gif=False)
+            self.validation(epoch=epoch, write2tensorboard=True, writer_interval=5, write_gif=False)
             #* Save best model + check early stopping
             stop = self.save_best_model(model_name=model_name)
             if stop:
@@ -162,7 +162,7 @@ class Labeller():
 
             #* Losses
             ce = self.ce(pred_seg, mask)
-            kl = self.kl(pred_heatmap[:, 1:], heatmap[:, 1:])
+            kl = self.kl(pred_heatmap, heatmap[: , 1: ])
             kl = dsntnn.average_loss(kl, mask=labels)
             mse = self.mse(pred_coords, keypoints)
             mse = dsntnn.average_loss(mse, mask=labels)
@@ -208,7 +208,7 @@ class Labeller():
                     pred_seg, pred_heatmap, pred_coords = self.model(img)
                 #* Losses
                 ce = self.ce(pred_seg, mask)
-                kl = self.kl(pred_heatmap[:, 1:], heatmap[:, 1:])
+                kl = self.kl(pred_heatmap, heatmap[: , 1: ])
                 kl = dsntnn.average_loss(kl, mask=labels)
                 mse = self.mse(pred_coords, keypoints)
                 mse = dsntnn.average_loss(mse, mask=labels)
@@ -242,6 +242,11 @@ class Labeller():
                         
 
             print('Validation Loss:', np.mean(self.writer.losses['val_loss']))
+            print(
+                f'\n CE:{np.mean(self.writer.losses["ce"])*self.ce_weight}-KL:{np.mean(self.writer.losses["kl"])*self.kl_weight}-MSE:{np.mean(self.writer.losses["mse"])*self.mse_weight}-BCE:{np.mean(self.writer.losses["bce"])*self.bce_weight}')
+
+
+
             if self.swa:
                 if epoch > self.swa_start:
                     self.swa_model.update_parameters(self.model)
