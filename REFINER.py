@@ -1,5 +1,5 @@
 """
-Script for training vertebrae locator, w/ DSNT & L1 loss
+Script for training refininement model 
 """
 
 import cv2
@@ -16,10 +16,9 @@ from argparse import ArgumentParser
 import utils.LabellerTL as ltl
 
 
-
 torch.autograd.set_detect_anomaly(True)
-# *Declare Paths + variables 
-parser = ArgumentParser(prog='Run vertebral body labelling inference')
+# *Declare Paths + variables
+parser = ArgumentParser(prog='Run label refinement model')
 parser.add_argument(
     '--root_dir', help='Root path containing all folds', type=str)
 parser.add_argument(
@@ -30,29 +29,30 @@ parser.add_argument('--mode', help='training/inference',
                     type=str, default='inference')
 args = parser.parse_args()
 
-batch_size=8
+batch_size = 8
 n_outputs = 13
 learning_rate = 3e-3
 num_epochs = 500
-classifier=True
-norm_coords=True
-early_stopping=False
-remove_invisible=False
+classifier = True
+norm_coords = True
+early_stopping = False
+remove_invisible = False
 
 ENCODER = 'resnet34'
 ENCODER_WEIGHTS = 'imagenet'
 
+
 def main():
-    #~Pre-processing + training 
+    #~Pre-processing + training
     # ** Create albumentation transforms - train + val + test
-    train_transforms = A.Compose([#A.HorizontalFlip(p=0.5),
-            A.ShiftScaleRotate(scale_limit=0.3, rotate_limit=10,
+    train_transforms = A.Compose([  # A.HorizontalFlip(p=0.5),
+        A.ShiftScaleRotate(scale_limit=0.3, rotate_limit=10,
                                  shift_limit=0.1, p=1, border_mode=0),
-            #A.GaussNoise(var_limit=0.025, p=0.5, per_channel=False),
-            #A.Perspective(p=0.5),
-            A.RandomCrop(height=342, width=512, p=0.5),
-            A.Resize(height=512, width=512)
-            ], 
+        #A.GaussNoise(var_limit=0.025, p=0.5, per_channel=False),
+        #A.Perspective(p=0.5),
+        A.RandomCrop(height=342, width=512, p=0.5),
+        A.Resize(height=512, width=512)
+    ],
         keypoint_params=A.KeypointParams(format=('xy'), label_fields=[
                                          'labels'], remove_invisible=remove_invisible),
         additional_targets={'heatmap': 'mask'})
@@ -63,8 +63,9 @@ def main():
                                  additional_targets={'heatmap': 'mask'})
 
     test_transforms = A.Compose([A.Resize(height=512, width=512)],
-        keypoint_params=A.KeypointParams(format='xy', remove_invisible=remove_invisible, label_fields=['labels']), 
-        additional_targets={'heatmap': 'mask'})
+                                keypoint_params=A.KeypointParams(
+                                    format='xy', remove_invisible=remove_invisible, label_fields=['labels']),
+                                additional_targets={'heatmap': 'mask'})
 
     #** Pre-processing functions
     pre_processing_fn = smp.encoders.get_preprocessing_fn(
@@ -72,26 +73,26 @@ def main():
 
     splitter = k_fold_splitter(
         args.root_dir, args.fold, args.mode, num_folds=4)
-    
+
     if args.mode == 'Training':
         #~ Training + val loops
         train, test = splitter.split_data()
         # ** Create Dataset for training
         train_dataset = LabelDataset(
             *train, pre_processing_fn=pre_processing_fn,
-            transforms=train_transforms, normalise=True, classifier=classifier, 
+            transforms=train_transforms, normalise=True, classifier=classifier,
             norm_coords=norm_coords)
         valid_dataset = LabelDataset(
-            *test, pre_processing_fn=pre_processing_fn,transforms=valid_transforms, 
+            *test, pre_processing_fn=pre_processing_fn, transforms=valid_transforms,
             normalise=True, classifier=classifier, norm_coords=norm_coords)
         # ** Convert to Dataloaders
         train_generator = DataLoader(train_dataset, batch_size=batch_size)
         valid_generator = DataLoader(valid_dataset, batch_size=batch_size)
 
         model = ltl.Labeller(training=train_generator, validation=valid_generator, testing=None,
-                              dir_name='exp1', n_outputs=14, output_path=args.output_dir, 
-                              classifier=classifier, norm_coords=norm_coords, early_stopping=early_stopping)
-        model.forward(model_name='labeller.pt',
+                             dir_name='exp1', n_outputs=14, output_path=args.output_dir,
+                             classifier=classifier, norm_coords=norm_coords, early_stopping=early_stopping)
+        model.forward(model_name='labeller_no_resBlock.pt',
                       num_epochs=num_epochs)
         #model.train(epoch=0)
         #model.validation(epoch=0)
@@ -106,8 +107,8 @@ def main():
         #** Convert to dataloader
         test_generator = DataLoader(test_dataset, batch_size=1)
         model = ltl.Labeller(training=None, validation=None, testing=test_generator,
-                             dir_name='exp1', n_outputs=14, output_path=args.output_dir, 
-                             classifier=classifier, norm_coords=norm_coords, early_stopping=early_stopping)
+                             dir_name='exp1', n_outputs=14, output_path=args.output_dir,
+                             classifier=classifier, norm_coords=norm_coords)
         model.inference(model_name='labeller.pt',
                         plot_output=True, save_preds=True)
 
@@ -115,6 +116,7 @@ def main():
         raise ValueError(
             "Unspecificied mode, should be one of 'Training, Inference'")
     torch.cuda.empty_cache()
-         
+
+
 if __name__ == '__main__':
     main()

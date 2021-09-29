@@ -167,7 +167,6 @@ class Labeller():
             mse = self.mse(pred_coords, keypoints)
             mse = dsntnn.average_loss(mse, mask=labels)
             loss = ce*self.ce_weight + kl*self.kl_weight + mse*self.mse_weight
-            #loss = kl*self.kl_weight + mse*self.mse_weight
             if self.classifier:
                 loss += bce
             self.writer.losses['train_loss'].append(loss.item())
@@ -214,7 +213,6 @@ class Labeller():
                 mse = dsntnn.average_loss(mse, mask=labels)
 
                 loss = ce*self.ce_weight + kl*self.kl_weight + mse*self.mse_weight
-                #loss = kl*self.kl_weight + mse*self.mse_weight
                 if self.classifier:
                     loss += bce * self.bce_weight
                     self.writer.losses['bce'].append(bce.item())
@@ -283,8 +281,7 @@ class Labeller():
                 keypoints = data['keypoints'].to(self.device, dtype=torch.float32)
                 #* Get predictions
                 if self.classifier:
-                    pred_seg, pred_heatmap, pred_coords, pred_labels = self.model(
-                        img)
+                    pred_seg, pred_heatmap, pred_coords, pred_labels = self.model(img)
                 else:
                     pred_seg, pred_heatmap, pred_coords = self.model(img)
 

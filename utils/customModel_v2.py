@@ -17,7 +17,7 @@ from types import MethodType
 from torch.quantization import QuantStub, DeQuantStub
 from torchvision.models.resnet import BasicBlock
 from segmentation_models_pytorch.unet.decoder import DecoderBlock
-from utils.modules import ResidualBlock
+from utils.modules import ResidualBlock, MLP, InterNet
 from einops import rearrange
 
 random.seed(60)
@@ -80,11 +80,13 @@ class labelNet(nn.Module):
             # * Classifier at end of encoder
             class_out = self.classifier(Z[-1])
 
-        segmentation = self.segmentation_head.forward(Y)
+        #segmentation = self.segmentation_head.forward(Y) #! REMOVE SEGMENTATION - CHECK IF NEEDED
+        
         heatmap = self.heatmap_head.forward(Y) 
         heatmap = F.relu(heatmap) 
+        segmentation = heatmap
         #* Element-wise prod. of mask + heatmap
-        map_ = F.softmax(segmentation, dim=1)*heatmap #* Softmax along channel axis
+        #map_ = F.softmax(segmentation, dim=1)*heatmap #* Softmax along channel axis
         if writer is not None:
             ...
             # writer.plot_prediction(f'H x S', img=x, prediction=map_, type_='heatmap', ground_truth=None,apply_norm=True)
@@ -92,16 +94,13 @@ class labelNet(nn.Module):
             #                             type_='heatmap', ground_truth=None, apply_norm=False)
 
         # #* Reshape arrays
-        map_ = rearrange(map_[:, 1:], 'b c h w -> b c (h w)') #* Ignore background
+        map_ = rearrange(heatmap[:, 1:], 'b c h w -> b c (h w)') #* Ignore background
         #* Filter out channels based on classifier
         class_map = self.sigmoid(class_out[..., None])*map_
         class_map = rearrange(class_map, 'b c (h w) -> b c h w', h=512, w=512)
 
-        norm_map = self.basic_block.forward(class_map)
-        norm_map = F.relu(norm_map)
-        # #norm_map = self.sigmoid(norm_map)
-        # print(map_[:, 1:].shape, norm_map.shape)
-        #norm_map = dsntnn.flat_softmax(map_[:, 1:].contiguous())
+        #norm_map = self.basic_block.forward(class_map) #! Don't think this adds anything...
+        norm_map = F.relu(class_map)
         norm_map = self.sharpen_heatmap(norm_map, alpha=2)
         
         if writer is not None:
@@ -114,6 +113,61 @@ class labelNet(nn.Module):
             return segmentation, norm_map, coords, class_out
 
         return segmentation, norm_map, coords
+
+
+##** --------------------------------------------------------REFINET------------------------------
+
+
+class Refinet(nn.Module):
+    def __init__(self, n_outputs, classifier=True):
+        super(Refinet, self).__init__()
+        self.input_size = (512, 512)
+        self.decoder_channels = [256, 128, 64, 32, 16]
+        self.decoder_out_channels = [4*x for x in self.decoder_channels]
+        # For classifier at end of segmentation head
+        self.aux_params = dict(
+            pooling='avg',             # one of 'avg', 'max'
+            dropout=0.5,               # dropout ratio, default is None
+            activation=None,      # activation function, default is None
+            classes=n_outputs-1,                 # define number of output labels
+        )
+        # Model
+        self.model = smp.Unet(
+            encoder_name="resnet34",
+            encoder_weights="imagenet",
+            encoder_depth=5,
+            in_channels=3,
+            classes=n_outputs,
+            aux_params=self.aux_params,
+            decoder_channels=tuple(self.decoder_channels)
+        )
+        #** Encoder -> Z + MLP -> Decoder
+        self.encoder = self.model.encoder
+        self.mlp = MLP()
+        self.internet = InterNet()
+        self.block = ResidualBlock(in_channels=256, out_channels=13, kernel_size=3, 
+            downsample=nn.Conv2d(in_channels=256, out_channels=13, kernel_size=1, stride=1))
+        self.classifier = self.model.classification_head if classifier else None
+
+    @staticmethod
+    def sigmoid(x):
+        return 1/(1+torch.exp(-x))
+
+    def forward(self, x, coords, writer=None):
+        Z = self.encoder.forward(x)  # * Z=latent variable
+        gamma, beta = self.mlp(coords)
+        inter_out = self.internet(Z[-1], gamma, beta) #* Combine MLP and CNN embedding
+
+        coords = self.block.forward(inter_out)  # * Y=prediction
+
+        if self.classifier:
+            class_out = self.classifier(Z[-1])
+            return coords, class_out
+
+        return coords
+
+
+
 
 #** --------------------SIAMESE UNET --------------------
 class customSiameseUNet(nn.Module):

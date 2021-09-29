@@ -3,6 +3,7 @@ Model modules
 """
 import torch
 import torch.nn as nn
+from torch.nn.modules.activation import LeakyReLU
 
 # Residual block
 
@@ -30,3 +31,50 @@ class ResidualBlock(nn.Module):
         out += residual
         out = self.relu(out)
         return out
+
+
+class MLP(nn.Module):
+    #~Multilayer Perceptron.
+  def __init__(self, in_channels, out_channels=2):
+    super().__init__()
+    self.layers = nn.Sequential(
+        nn.Flatten(),
+        nn.Linear(in_channels, 12),
+        nn.ReLU(),
+        nn.Linear(12, 4),
+        nn.ReLU(),
+        nn.Linear(4, out_channels)
+    )
+
+  def forward(self, x):
+    #~Forward pass
+    return self.layers(x)
+
+class InterNet(nn.Module):
+    #~Integrate info from original point 
+    #* From Conditional Deformable Image Registration with Convolutional Neural Network
+    def __init__(self):
+        super().__init__()
+        self.core = nn.Sequential(
+            LeakyReLU(negative_slope=0.2),
+            nn.Conv2d(in_channels=256, out_channels=128)
+        )
+        self.instance_norm1 = nn.InstanceNorm2d(num_features=256)
+        self.instance_norm2 = nn.InstanceNorm2d(num_features=128)
+
+
+    def forward(self, x, gamma, beta):
+        #** x*gamma + beta
+        residual = x
+        x = self.instance_norm1(x)
+        x *= gamma
+        x += beta
+        x = self.core(x)
+        x *= gamma
+        x += beta
+        x = self.core(x)
+        x += residual
+        return x
+
+
+
