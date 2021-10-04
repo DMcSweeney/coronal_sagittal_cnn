@@ -23,7 +23,6 @@ class LabelDataset(Dataset):
     transforms=None, normalise=True, classifier=False, norm_coords=False):
         #~Custom dataset for spine models with coronal and sagittal inputs 
         super(LabelDataset, self).__init__()
-        
         self.sagittal_inputs = self.load_data(img_paths, sub_folder='slices')
         self.heatmaps = self.load_data(tgt_paths, sub_folder = 'heatmaps')
         self.masks = self.load_data(tgt_paths, sub_folder='masks')
@@ -487,21 +486,25 @@ class k_fold_splitter():
         #~ Collect all training files, then train/val split and return both lists
         #* Prepare dictionaries
         img_dict = {file.split('.')[0]: {} for root, dirs, files in os.walk(
-            self.root) for file in files if f'q{self.test_fold}' not in root}
+            self.root) for file in files if f'q{self.test_fold}' not in root and file.endswith(('.npy', '.csv'))}
         tgt_dict = {file.split('.')[0]: {} for root, dirs, files in os.walk(
-            self.root) for file in files if f'q{self.test_fold}' not in root}
+            self.root) for file in files if f'q{self.test_fold}' not in root and file.endswith(('.npy', '.csv'))}
         for root, dirs, files in os.walk(self.root):
             if files and f'q{self.test_fold}' not in root:
                 if 'slices' in root:
                     for file in files:
                         if file.endswith(('.npy', '.csv')):
-                            name = file.split('.')[0]
+                            name, ext = file.split('.')
+                            if ext == 'npz': #* Npz included in npy ?!
+                                break
                             sub_folder = root.split('/')[-1]
                             img_dict[name][sub_folder] = os.path.join(root, file)
                 elif 'targets' in root:
                     for file in files:
                         if file.endswith(('.npy', '.csv')):
-                            name = file.split('.')[0]
+                            name, ext = file.split('.')
+                            if ext == 'npz': 
+                                continue
                             sub_folder = root.split('/')[-1]
                             tgt_dict[name][sub_folder] = os.path.join(root, file)
                 else:

@@ -29,7 +29,7 @@ import seaborn as sns
 
 import utils.customModel_v2 as cm2
 import utils.customWriter_v2 as cw2
-from utils.customLosses import EarlyStopping, kl_reg
+from utils.customLosses import EarlyStopping, FocalLoss, dice_loss, kl_reg, multi_class_dice
 
 class Labeller():
     """
@@ -56,7 +56,7 @@ class Labeller():
         self.ce = nn.CrossEntropyLoss().cuda()
         self.ce_weight = 0
         self.mse = dsntnn.euclidean_losses
-        self.mse_weight = 50
+        self.mse_weight = 75
         self.kl = kl_reg
         self.kl_weight = 1
         self.bce = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([2])).to(device) if classifier else None

@@ -45,6 +45,15 @@ def dice_coef_loss(y_true, y_pred, smooth=1):
     #* Defined as 'soft dice', works well for segmentation tasks with one two classes
     return 1-dice_coef(y_true, y_pred, smooth=smooth)
 
+
+class dice_loss(nn.Module):
+    def __init__(self):
+        super().__init__()
+    
+    def forward(self, pred, target):
+        return dice_coef_loss(target, pred)
+
+
 class multi_class_dice(nn.Module):
     def __init__(self):
         super().__init__()
@@ -53,38 +62,55 @@ class multi_class_dice(nn.Module):
     def sigmoid(x):
         return 1/(1+torch.exp(-x))
 
-    def forward(self, pred, target):
-        num_classes = pred.size()[1]
+    def forward(self, pred, target, mask=None):
+
+        batch_size, num_classes= pred.size()[:2]
         loss = 0
-        #dice_pred = F.softmax(pred, dim=1)
-        dice_pred = self.sigmoid(pred)
-        for channel in range(num_classes):
-            mask = torch.where(target == channel, 1, 0)
-            loss += dice_coef_loss(mask, dice_pred[:, channel])
-        return loss.mean()/num_classes
+        dice_pred = F.softmax(pred, dim=1)
+        #dice_pred = self.sigmoid(pred)
+        used_channels = 0
+        for idx in range(batch_size):
+            for channel in range(num_classes):
+                if channel == 0: continue
+                if mask is not None and mask[idx, channel-1] == 1.:
+                    mask = torch.where(target[idx] == channel, 1, 0)
+                    loss += dice_coef_loss(mask, dice_pred[idx, channel])
+                    used_channels += 1
+        return loss.mean()/used_channels
 
 
-class FocalLoss(nn.modules.loss._WeightedLoss):
-    def __init__(self, weight=None, gamma=2, reduction='mean', apply_sigmoid=False):
-        super(FocalLoss, self).__init__(weight, reduction=reduction)
+class FocalLoss(nn.Module):
+    def __init__(self, pos_weight=2, gamma=2, reduction='mean'):
+        super().__init__()
         self.gamma = gamma
-        # weight parameter will act as the alpha parameter to balance class weights
-        self.weight = weight
-        self.apply_sigmoid=apply_sigmoid
-
-    @staticmethod
-    def sigmoid(x):
-        return 1/(1+torch.exp(-x))
+        self.pos_weight = pos_weight
 
     def forward(self, input, target):
-        if self.apply_sigmoid:
-            input = self.sigmoid(input)
-        # ce_loss = F.cross_entropy(
-        #     input, target, reduction=self.reduction, weight=self.weight)
-        ce_loss = F.binary_cross_entropy(input, target, reduction='mean')
+        ce_loss = F.binary_cross_entropy_with_logits(input, target, 
+        reduction='mean', pos_weight=torch.tensor([self.pos_weight]).cuda())
         pt = torch.exp(-ce_loss)
         focal_loss = ((1 - pt) ** self.gamma * ce_loss).mean()
         return focal_loss
+
+
+class edgeLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, pred, coords, labels):
+        #* coords = gt coords
+        loss = []
+        for batch in range(pred.shape[0]):
+            self.loss_calc(pred[batch], coords[batch], labels[batch])
+
+        ...
+
+    def loss_calc(pred, coords, labels):
+        for i, (x, y) in enumerate(coords):
+            if labels[i] == 0: continue
+
+
+
 
 class EarlyStopping(object):
     def __init__(self, mode='min', min_delta=0, patience=10, percentage=False):
@@ -134,3 +160,5 @@ class EarlyStopping(object):
             if mode == 'max':
                 self.is_better = lambda a, best: a > best + (
                     best * min_delta / 100)
+
+

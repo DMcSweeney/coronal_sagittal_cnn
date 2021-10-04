@@ -99,7 +99,7 @@ class labelNet(nn.Module):
         class_map = self.sigmoid(class_out[..., None])*map_
         class_map = rearrange(class_map, 'b c (h w) -> b c h w', h=512, w=512)
 
-        #norm_map = self.basic_block.forward(class_map) #! Don't think this adds anything...
+        # #norm_map = self.basic_block.forward(class_map) #! Don't think this adds anything...
         norm_map = F.relu(class_map)
         norm_map = self.sharpen_heatmap(norm_map, alpha=2)
         

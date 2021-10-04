@@ -91,7 +91,7 @@ def main():
         model = ltl.Labeller(training=train_generator, validation=valid_generator, testing=None,
                               dir_name='exp1', n_outputs=14, output_path=args.output_dir, 
                               classifier=classifier, norm_coords=norm_coords, early_stopping=early_stopping)
-        model.forward(model_name='labeller.pt',
+        model.forward(model_name='labeller_2p5_sigma.pt',
                       num_epochs=num_epochs)
         #model.train(epoch=0)
         #model.validation(epoch=0)
@@ -108,7 +108,7 @@ def main():
         model = ltl.Labeller(training=None, validation=None, testing=test_generator,
                              dir_name='exp1', n_outputs=14, output_path=args.output_dir, 
                              classifier=classifier, norm_coords=norm_coords, early_stopping=early_stopping)
-        model.inference(model_name='labeller.pt',
+        model.inference(model_name='labeller_no_constrain.pt',
                         plot_output=True, save_preds=True)
 
     else:
