@@ -29,7 +29,7 @@ import seaborn as sns
 
 import utils.customModel_v2 as cm2
 import utils.customWriter_v2 as cw2
-from utils.customLosses import EarlyStopping, FocalLoss, dice_loss, kl_reg, multi_class_dice
+from utils.customLosses import EarlyStopping, FocalLoss, dice_loss, kl_reg, multi_class_dice, edgeLoss
 
 class Labeller():
     """
@@ -53,8 +53,8 @@ class Labeller():
         self.es = EarlyStopping(patience=75) if early_stopping else None
 
         #* Losses 
-        self.ce = nn.CrossEntropyLoss().cuda()
-        self.ce_weight = 0
+        self.ce = edgeLoss(self.device).cuda()
+        self.ce_weight = 50
         self.mse = dsntnn.euclidean_losses
         self.mse_weight = 75
         self.kl = kl_reg
@@ -161,7 +161,7 @@ class Labeller():
                 pred_seg, pred_heatmap, pred_coords = self.model(img)
 
             #* Losses
-            ce = self.ce(pred_seg, mask)
+            ce = self.ce(pred_coords, keypoints, labels)
             kl = self.kl(pred_heatmap, heatmap[: , 1: ])
             kl = dsntnn.average_loss(kl, mask=labels)
             mse = self.mse(pred_coords, keypoints)
@@ -206,7 +206,7 @@ class Labeller():
                 else:
                     pred_seg, pred_heatmap, pred_coords = self.model(img)
                 #* Losses
-                ce = self.ce(pred_seg, mask)
+                ce = self.ce(pred_coords, keypoints, labels)
                 kl = self.kl(pred_heatmap, heatmap[: , 1: ])
                 kl = dsntnn.average_loss(kl, mask=labels)
                 mse = self.mse(pred_coords, keypoints)

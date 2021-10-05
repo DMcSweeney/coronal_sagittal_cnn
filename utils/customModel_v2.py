@@ -44,7 +44,8 @@ class labelNet(nn.Module):
             in_channels=3,
             classes=n_outputs,
             aux_params=self.aux_params,
-            decoder_channels=tuple(self.decoder_channels)
+            decoder_channels=tuple(self.decoder_channels),
+            decoder_attention_type='scse'
         )
 
         self.encoder = self.model.encoder
@@ -98,9 +99,9 @@ class labelNet(nn.Module):
         #* Filter out channels based on classifier
         class_map = self.sigmoid(class_out[..., None])*map_
         class_map = rearrange(class_map, 'b c (h w) -> b c h w', h=512, w=512)
-
-        # #norm_map = self.basic_block.forward(class_map) #! Don't think this adds anything...
-        norm_map = F.relu(class_map)
+        #norm_map = self.basic_block.forward(torch.cat([class_map, x], dim=1)) 
+        norm_map = self.basic_block.forward(class_map)
+        norm_map = F.relu(norm_map)
         norm_map = self.sharpen_heatmap(norm_map, alpha=2)
         
         if writer is not None:

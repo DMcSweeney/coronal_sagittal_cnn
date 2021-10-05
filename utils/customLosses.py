@@ -94,22 +94,43 @@ class FocalLoss(nn.Module):
 
 
 class edgeLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, device):
         super().__init__()
+        self.device = device
 
     def forward(self, pred, coords, labels):
+        # ~ Loss SUM_i( |y_top_i - *y_top_i| + |y_bot_i - *y_bot_i|) i where labels[i] == 1
         #* coords = gt coords
         loss = []
         for batch in range(pred.shape[0]):
-            self.loss_calc(pred[batch], coords[batch], labels[batch])
+            dists = self.get_dists(coords[batch])
+            pred_dists = self.get_dists(pred[batch])
+            diff = torch.abs(dists-pred_dists)  
+            masked_diff = diff*labels[..., None]
+            loss.append(torch.sum(masked_diff)/torch.sum(labels))
+        loss = torch.tensor(loss)
+        return torch.sum(loss)/pred.shape[0]
 
-        ...
-
-    def loss_calc(pred, coords, labels):
+    def get_dists(self, coords):
+        #~ Calculate sup-inf. distance between neighbouring verts.
+        arr = []
         for i, (x, y) in enumerate(coords):
-            if labels[i] == 0: continue
-
-
+            if i == 0:
+                #* Don't calc top
+                bot_y = coords[i+1][-1]
+                bot = torch.abs(y - bot_y)
+                top = 0
+            elif i == coords.shape[0]-1:
+                #* Don't calc bot
+                top_y = coords[i-1][-1]
+                top = torch.abs(y - top_y)
+                bot = 0
+            else:
+                top_y, bot_y = coords[i-1][-1], coords[i+1][-1]
+                top = torch.abs(y - top_y)
+                bot = torch.abs(y - bot_y)
+            arr.append([top, bot])
+        return torch.tensor(arr).to(self.device)
 
 
 class EarlyStopping(object):
