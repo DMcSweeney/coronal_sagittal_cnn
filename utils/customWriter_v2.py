@@ -18,7 +18,7 @@ from einops import rearrange
 import torch.nn.functional as F
 
 class customWriter(SummaryWriter):
-    def __init__(self, log_dir, batch_size, dataset, epoch=0):
+    def __init__(self, log_dir, batch_size, num_classes, epoch=0):
         super().__init__()
         self.batch_size = batch_size
         self.epoch = epoch
@@ -26,14 +26,10 @@ class customWriter(SummaryWriter):
         # self.cmap = sns.cubehelix_palette(
         #     start=1.5, rot=-1.5, gamma=0.8, as_cmap=True)
         self.cmap = 'viridis'
-
-        if dataset == 'PAB':
-            self.ordered_verts = ['T4', 'T5', 'T6', 'T7', 'T8', 'T9',
-                                  'T10', 'T11', 'T12', 'L1', 'L2', 'L3', 'L4']
-        elif dataset == 'VerSe':
-            self.ordered_verts = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'T1', 'T2', 'T3', 'T4', 'T5',
-                                              'T6', 'T7', 'T8', 'T9', 'T10', 'T11', 'T12', 'L1', 'L2', 'L3',
-                                              'L4', 'L5', 'L6', 'Sacrum', 'Cocygis', 'T13']
+        self.ordered_verts = ['T4', 'T5', 'T6', 'T7', 'T8', 'T9',
+                              'T10', 'T11', 'T12', 'L1', 'L2', 'L3', 'L4']
+        self.hist_colours = ['r', 'b', 'g', 'c', 'm', 'y', 'orange', 
+        'brown', 'pink', 'purple', 'k', 'gray', 'olive']
 
     @staticmethod
     def sigmoid(x):
@@ -69,7 +65,7 @@ class customWriter(SummaryWriter):
     def plot_heatmap(self, title, img, heatmap, apply_softmax=True, norm_coords=False, labels=None):
         fig = plt.figure(figsize=(10, 10))
         plt.tight_layout()
-        #heatmap = self.sharpen_heatmap(heatmap, alpha=2)
+        heatmap = self.sharpen_heatmap(heatmap, alpha=2)
         if apply_softmax:
             heatmap = dsntnn.flat_softmax(heatmap).cpu().numpy()
         else:
@@ -85,10 +81,13 @@ class customWriter(SummaryWriter):
                 torch.tensor(heatmap), normalized_coordinates=norm_coords)
             if norm_coords:
                 coords = dsntnn.normalized_to_pixel_coordinates(coords, size=(512, 512))
+
             for channel in range(coords.shape[1]):
                 x, y = coords[idx, channel]
-                if labels is not None and labels[idx, channel] == 1:
-                    vert = self.ordered_verts[channel]
+                if channel == 0:
+                    continue
+                if labels is not None and labels[idx, channel-1] == 1:
+                    vert = self.ordered_verts[channel - 1]
 
                     ax.scatter(x, y, s=20, c='r', marker='+')
                     ax.text(x, y, vert, c='y', size=15)
@@ -118,11 +117,12 @@ class customWriter(SummaryWriter):
 
     def plot_prediction(self, title, img, prediction, type_, ground_truth=None, apply_norm=False,
                 coords=None, gt_coords=None, labels=None):
-        #* Type == ['mask', 'heatmap', 'distance_transform']
+        #* Type == ['mask', 'heatmap']
         fig, ax = plt.subplots(1, 2, figsize=(20, 10))
         plt.subplots_adjust(wspace=0)
 
         pred_coords = dsntnn.dsnt(prediction, normalized_coordinates=False) if type_ == 'heatmap' else None
+
         if apply_norm:
             if type_ == 'mask':
                 #! Only for binary masks
@@ -173,11 +173,6 @@ class customWriter(SummaryWriter):
             pred = np.where(np.argmax(prediction[idx], axis=0) == 0, np.nan, np.argmax(
                 prediction[idx], axis=0))
             ax[1].imshow(pred, alpha=0.5, cmap=self.cmap)
-            
-        elif type_ == 'distance_transform':
-            pred = prediction[idx,0]
-            ax[1].imshow(pred, alpha=0.5, cmap=self.cmap)
-
         if coords is not None:
             for i, vert in enumerate(self.ordered_verts):
                 if labels is not None and labels[idx, i] == 0: continue

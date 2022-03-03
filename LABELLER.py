@@ -28,7 +28,6 @@ parser.add_argument(
     '--fold', help='Fold used for !testing! all others used for training', type=int)
 parser.add_argument('--mode', help='training/inference',
                     type=str, default='inference')
-parser.add_argument('--dataset', help='PAB/VerSe', type=str)
 args = parser.parse_args()
 
 batch_size=8
@@ -56,16 +55,16 @@ def main():
             ], 
         keypoint_params=A.KeypointParams(format=('xy'), label_fields=[
                                          'labels'], remove_invisible=remove_invisible),
-        additional_targets={'heatmap': 'mask', 'edt': 'mask'})
+        additional_targets={'heatmap': 'mask'})
 
     valid_transforms = A.Compose([A.Resize(height=512, width=512)],
                                  keypoint_params=A.KeypointParams(
                                      format='xy', remove_invisible=remove_invisible, label_fields=['labels']),
-                                 additional_targets={'heatmap': 'mask', 'edt': 'mask'})
+                                 additional_targets={'heatmap': 'mask'})
 
     test_transforms = A.Compose([A.Resize(height=512, width=512)],
         keypoint_params=A.KeypointParams(format='xy', remove_invisible=remove_invisible, label_fields=['labels']), 
-        additional_targets={'heatmap': 'mask', 'edt':'mask'})
+        additional_targets={'heatmap': 'mask'})
 
     #** Pre-processing functions
     pre_processing_fn = smp.encoders.get_preprocessing_fn(
@@ -74,31 +73,30 @@ def main():
     splitter = k_fold_splitter(
         args.root_dir, args.fold, args.mode, num_folds=4)
     
-    if args.mode in ['Training', 'Combined']:
+    if args.mode == 'Training':
         #~ Training + val loops
         train, test = splitter.split_data()
-        print(f'Training: {len(train[0].keys())}, Test: {len(test[0].keys())}')
         # ** Create Dataset for training
         train_dataset = LabelDataset(
             *train, pre_processing_fn=pre_processing_fn,
             transforms=train_transforms, normalise=True, classifier=classifier, 
-            norm_coords=norm_coords, dataset=args.dataset)
+            norm_coords=norm_coords)
         valid_dataset = LabelDataset(
             *test, pre_processing_fn=pre_processing_fn,transforms=valid_transforms, 
-            normalise=True, classifier=classifier, norm_coords=norm_coords, dataset=args.dataset)
+            normalise=True, classifier=classifier, norm_coords=norm_coords)
         # ** Convert to Dataloaders
         train_generator = DataLoader(train_dataset, batch_size=batch_size)
         valid_generator = DataLoader(valid_dataset, batch_size=batch_size)
 
         model = ltl.Labeller(training=train_generator, validation=valid_generator, testing=None,
-                              dir_name='exp1', batch_size=batch_size, dataset=args.dataset, output_path=args.output_dir, 
+                              dir_name='exp1', batch_size=batch_size, n_outputs=14, output_path=args.output_dir, 
                               classifier=classifier, norm_coords=norm_coords, early_stopping=early_stopping)
-        model.forward(model_name='T12_labeller.pt',
+        model.forward(model_name='labeller_edgeLoss_att.pt',
                       num_epochs=num_epochs)
         #model.train(epoch=0)
         #model.validation(epoch=0)
 
-    elif args.mode in ['Inference', 'Combined']:
+    elif args.mode == 'Inference':
         #~ Model inference loop
         images, targets = splitter.split_data()
         #* Create dataset for inference

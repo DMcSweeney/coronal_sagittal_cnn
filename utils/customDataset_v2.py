@@ -7,7 +7,6 @@ import torch
 import numpy as np
 import pandas as pd
 from torch._C import _debug_set_fusion_group_inlining
-from torch.utils import data
 from torch.utils.data import Dataset
 from sklearn.preprocessing import OneHotEncoder
 from collections import Counter
@@ -21,14 +20,12 @@ from einops import rearrange
 
 class LabelDataset(Dataset):
     def __init__(self, img_paths, tgt_paths, pre_processing_fn=None, 
-    transforms=None, normalise=True, classifier=False, norm_coords=False, dataset='PAB'):
+    transforms=None, normalise=True, classifier=False, norm_coords=False):
         #~Custom dataset for spine models with coronal and sagittal inputs 
         super(LabelDataset, self).__init__()
-        self.dataset = dataset
         self.sagittal_inputs = self.load_data(img_paths, sub_folder='slices')
         self.heatmaps = self.load_data(tgt_paths, sub_folder = 'heatmaps')
         self.masks = self.load_data(tgt_paths, sub_folder='masks')
-        self.edt = self.load_data(tgt_paths, sub_folder='dist_transform') # Add Euclidean distance transform
         self.coordinates = self.load_coordinates(tgt_paths, sub_folder='coordinates')
 
         self.norm_sagittal_inputs = self.normalise_inputs(self.sagittal_inputs)
@@ -39,16 +36,10 @@ class LabelDataset(Dataset):
         self.normalise = normalise
         self.classifier = classifier
         self.norm_coords = norm_coords
-        
 
         self.img_size = self.sagittal_inputs['slices'].shape[1:3]
-        if dataset ==  'PAB':
-            self.ordered_verts = ['T4', 'T5', 'T6', 'T7', 'T8', 'T9',
-                                'T10', 'T11', 'T12', 'L1', 'L2', 'L3', 'L4']
-        elif dataset == 'VerSe':
-            self.ordered_verts = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'T1', 'T2', 'T3', 'T4', 'T5',
-                                              'T6', 'T7', 'T8', 'T9', 'T10', 'T11', 'T12', 'L1', 'L2', 'L3', 
-                                              'L4', 'L5', 'L6', 'Sacrum', 'Cocygis', 'T13']
+        self.ordered_verts = ['T4', 'T5', 'T6', 'T7', 'T8', 'T9',
+                              'T10', 'T11', 'T12', 'L1', 'L2', 'L3', 'L4']
 
     def get_ids(self):
         #* Get patient names
@@ -68,7 +59,8 @@ class LabelDataset(Dataset):
         data_dict['slices'] = np.array(data_dict['slices'])
         return data_dict
     
-    def load_coordinates(self, path_dict, sub_folder):
+    @staticmethod
+    def load_coordinates(path_dict, sub_folder):
         #*Load directory of csv files with coordinate info
         data_dict = {}
         for pid, dict_ in path_dict.items():
@@ -76,10 +68,7 @@ class LabelDataset(Dataset):
             df = pd.read_csv(path)
             data_dict[pid] = {}
             for i, row in df.iterrows():
-                if self.dataset == 'PAB':
-                    data_dict[pid][row[0]] = (row[1], row[2])
-                elif self.dataset == 'VerSe':
-                    data_dict[pid][row[0]] = (row[2], row[3])  #~ Verse data has 3D annotations
+                data_dict[pid][row[0]] = (row[1], row[2])
         return data_dict
 
     @staticmethod
@@ -162,15 +151,14 @@ class LabelDataset(Dataset):
         else:
             img = self.sagittal_inputs['slices'][index]
         heatmap = self.heatmaps['slices'][index]
-        heatmap = np.moveaxis(heatmap, 0, -1)[..., 1:]
-        dist_transform = self.edt['slices'][index][..., np.newaxis]
+        heatmap = np.moveaxis(heatmap, 0, -1)
         mask = self.masks['slices'][index][..., np.newaxis]
         keypoints, labels = self.convert2keypoints(pid)
         if self.transforms:
             #* Apply transforms
             augmented = self.transforms(
-                image=img, mask=mask, keypoints=keypoints, labels=labels, heatmap=heatmap, edt=dist_transform)
-            img, mask, keypoints, labels, heatmap, dist_transform = augmented.values()
+                image=img, mask=mask, keypoints=keypoints, labels=labels, heatmap=heatmap)
+            img, mask, keypoints, labels, heatmap = augmented.values()
             
             labels = torch.stack([torch.tensor(elem)
                                  for elem in labels], dim=0)
@@ -182,10 +170,7 @@ class LabelDataset(Dataset):
                 heatmap_prep = self.pre_processing_fn(
                     image=np.moveaxis(img.numpy(), 0, -1), mask=heatmap)
                 _, heatmap = heatmap_prep.values()
-                edt_prep = self.pre_processing_fn(
-                    image=np.moveaxis(img.numpy(), 0, -1), mask=dist_transform)
-                _, dist_transform = edt_prep.values()
-                #heatmap = dsntnn.flat_softmax(heatmap)
+                #heatmap = dsntnn.flat_softmax(heatmap[np.newaxis])
                 #heatmap = self.heatmap_softmax(heatmap[None], labels)[0]
             #* Convert keypoints to tensor
             keypoints = self.keypoints2tensor(keypoints, size=512, norm_coords=self.norm_coords)
@@ -196,7 +181,6 @@ class LabelDataset(Dataset):
                 'heatmap': heatmap,
                 'keypoints': keypoints,
                 'labels': labels,
-                'edt': dist_transform,
                 'id': pid}
         else:
             print('Need some transforms - minimum convert to Tensor')
@@ -465,20 +449,11 @@ class k_fold_splitter():
     def split_data(self):
         if self.mode == 'Inference':
             return self.inference_split()
-        elif self.mode == 'Training':
+        if self.mode == 'Training':
             return self.training_split()
-        elif self.mode == 'Combined':
-            #~ Add test set to training set - used if separate test set available
-            train, test = self.training_split()
-            train_img, train_tgt = train
-            test_img, test_tgt = test
-            val_img, val_tgt = self.inference_split()
-            return ({**train_img, **test_img}, {**train_tgt, **test_tgt}), (val_img, val_tgt)
-
-
         else:
             raise ValueError(
-                "Unspecificied mode, should be one of 'Training, Inference, Combined'")
+                "Unspecificied mode, should be one of 'Training, Inference'")
 
     def inference_split(self):
         #~ Go through testing fold and return relevant filepaths
@@ -553,4 +528,5 @@ class k_fold_splitter():
         train_size = int(len(ids)*self.train_test_ratio)
         train_ids = np.array(ids)[indices[:train_size]]
         test_ids = np.array(ids)[indices[train_size:]]
+        print(f'Training: {len(train_ids)}; Testing: {len(test_ids)}')
         return train_ids, test_ids
