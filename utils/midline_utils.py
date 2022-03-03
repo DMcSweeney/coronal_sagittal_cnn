@@ -119,7 +119,6 @@ def extract_sagittal_projections(ids, masks, fold, output_path, save_slice=False
         fit = mask2midline(mask[0], N=15)
         #* Convert back to original frame   
         slice_ = get_sagittal_slice(id_, fold, fit)
-        break
         if save_slice:
             np.save(os.path.join(output_path, f'{id_}.npy'), slice_)
         if plot_slice:

@@ -106,7 +106,7 @@ class edgeLoss(nn.Module):
             dists = self.get_dists(coords[batch])
             pred_dists = self.get_dists(pred[batch])
             diff = torch.abs(dists-pred_dists)  
-            masked_diff = diff*labels[..., None]
+            masked_diff = diff*labels[batch, :, None]
             loss.append(torch.sum(masked_diff)/torch.sum(labels))
         loss = torch.tensor(loss)
         return torch.sum(loss)/pred.shape[0]

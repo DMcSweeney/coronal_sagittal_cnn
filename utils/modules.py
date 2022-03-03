@@ -9,7 +9,7 @@ from torch.nn.modules.activation import LeakyReLU
 
 
 class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=1, stride=1, downsample=None, bias=True):
+    def __init__(self, in_channels, out_channels, kernel_size=1, stride=1, downsample=None, bias=True, linear_activation=False):
         super(ResidualBlock, self).__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, stride, kernel_size, bias=bias)
         self.bn1 = nn.BatchNorm2d(out_channels)
@@ -18,6 +18,7 @@ class ResidualBlock(nn.Module):
             out_channels, out_channels, kernel_size, bias=bias)
         self.bn2 = nn.BatchNorm2d(out_channels)
         self.downsample = downsample
+        self.linear_activation = linear_activation
 
     def forward(self, x):
         residual = x
@@ -29,8 +30,11 @@ class ResidualBlock(nn.Module):
         if self.downsample is not None:
             residual = self.downsample(x)
         out += residual
-        out = self.relu(out)
-        return out
+        if self.linear_activation:
+            return out
+        else:
+            return self.relu(out)
+            
 
 
 class MLP(nn.Module):

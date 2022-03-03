@@ -34,7 +34,7 @@ class labelNet(nn.Module):
             pooling='avg',             # one of 'avg', 'max'
             dropout=0.5,               # dropout ratio, default is None
             activation=None,      # activation function, default is None
-            classes=n_outputs-1,                 # define number of output labels
+            classes=n_outputs,                 # define number of output labels
         )
         # Model
         self.model = smp.Unet(
@@ -51,15 +51,12 @@ class labelNet(nn.Module):
         self.encoder = self.model.encoder
         self.decoder = self.model.decoder
         self.segmentation_head = self.model.segmentation_head
-        self.heatmap_head = ResidualBlock(in_channels=16, out_channels=14, kernel_size=1, 
-                    downsample=nn.Conv2d(in_channels=16, out_channels=14, kernel_size=1, stride=1))
+        self.edt_head = ResidualBlock(in_channels=16, out_channels=1, kernel_size=1, linear_activation=True,
+                    downsample=nn.Conv2d(in_channels=16, out_channels=1, kernel_size=1, stride=1))
         self.classifier = self.model.classification_head if classifier else None
         self.norm_coords = norm_coords
-        self.heatmap2onedim = nn.Conv2d(
-            14, n_outputs, kernel_size=(1, self.input_size[1]), bias=False)
-
-        self.basic_block = ResidualBlock(in_channels=13, out_channels=13, kernel_size=1,
-                                         downsample=nn.Conv2d(in_channels=13, out_channels=13, kernel_size=1, stride=1))
+        self.basic_block = ResidualBlock(in_channels=n_outputs, out_channels=n_outputs, kernel_size=1, linear_activation=False,
+                                         downsample=nn.Conv2d(in_channels=n_outputs, out_channels=n_outputs, kernel_size=1, stride=1))
 
     @staticmethod
     def sharpen_heatmap(heatmap, alpha=2):
@@ -82,8 +79,8 @@ class labelNet(nn.Module):
             class_out = self.classifier(Z[-1])
 
         #segmentation = self.segmentation_head.forward(Y) #! REMOVE SEGMENTATION - CHECK IF NEEDED
-        
-        heatmap = self.heatmap_head.forward(Y) 
+        dist_transform = self.edt_head.forward(Y)
+        heatmap = self.segmentation_head.forward(Y) 
         heatmap = F.relu(heatmap) 
         segmentation = heatmap
         #* Element-wise prod. of mask + heatmap
@@ -94,15 +91,16 @@ class labelNet(nn.Module):
             # writer.plot_prediction(f'Sigmoid mask', img=x, prediction=F.softmax(segmentation, dim=1), 
             #                             type_='heatmap', ground_truth=None, apply_norm=False)
 
-        # #* Reshape arrays
-        map_ = rearrange(heatmap[:, 1:], 'b c h w -> b c (h w)') #* Ignore background
-        #* Filter out channels based on classifier
-        class_map = self.sigmoid(class_out[..., None])*map_
-        class_map = rearrange(class_map, 'b c (h w) -> b c h w', h=512, w=512)
-        #norm_map = self.basic_block.forward(torch.cat([class_map, x], dim=1)) 
-        norm_map = self.basic_block.forward(class_map)
-        norm_map = F.relu(norm_map)
-        norm_map = self.sharpen_heatmap(norm_map, alpha=2)
+        # # #* Reshape arrays
+        # map_ = rearrange(heatmap, 'b c h w -> b c (h w)') #* Ignore background
+        # #* Filter out channels based on classifier
+        # class_map = self.sigmoid(class_out[..., None])*map_
+        # class_map = rearrange(class_map, 'b c (h w) -> b c h w', h=512, w=512)
+        # #norm_map = self.basic_block.forward(torch.cat([class_map, x], dim=1)) 
+        # norm_map = self.basic_block.forward(class_map)
+        # norm_map = F.relu(norm_map)
+
+        norm_map = self.sharpen_heatmap(heatmap, alpha=2)
         
         if writer is not None:
             ...
@@ -111,9 +109,9 @@ class labelNet(nn.Module):
 
         coords = dsntnn.dsnt(norm_map, normalized_coordinates=self.norm_coords)
         if self.classifier:
-            return segmentation, norm_map, coords, class_out
+            return segmentation, norm_map, coords, class_out, dist_transform
 
-        return segmentation, norm_map, coords
+        return segmentation, norm_map, coords, dist_transform
 
 
 ##** --------------------------------------------------------REFINET------------------------------

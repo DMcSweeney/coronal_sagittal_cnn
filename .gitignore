@@ -13,3 +13,5 @@ logs/
 *.nii
 *.txt
 midline_output/
+*/__pycache__/
+*/.ipynb_checkpoints

@@ -7,6 +7,7 @@ from einops.einops import rearrange
 import numpy as np
 import matplotlib
 from scipy.ndimage.morphology import distance_transform_bf
+from torch._C import Value
 from torch.functional import norm
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -38,7 +39,7 @@ class Labeller():
       dir_name = directory name used for splitting tensorboard runs.   
     """
     def __init__(self, training=None, validation=None, testing=None, dir_name=None, device="cuda:0", 
-                    batch_size=4, n_outputs=13, learning_rate=3e-3, num_epochs=200, output_path='./outputs/', 
+                    batch_size=4, dataset='PAB', learning_rate=3e-3, num_epochs=200, output_path='./outputs/', 
                     model_path=None, SWA=False, classifier=False, norm_coords=False, early_stopping=False):
         self.device = torch.device(device)
         torch.cuda.set_device(self.device)
@@ -47,24 +48,32 @@ class Labeller():
         self.test_dataLoader = testing
         self.classifier = classifier
         self.norm_coords = norm_coords
+
+        if dataset == 'PAB':
+            self.n_outputs = 13
+        elif dataset == 'VerSe':
+            self.n_outputs = 28
+        else:
+            raise ValueError
+
         self.model = cm2.labelNet(
-            n_outputs=n_outputs, classifier=classifier, norm_coords=norm_coords).cuda()
+            n_outputs=self.n_outputs, classifier=classifier, norm_coords=norm_coords).cuda()
         self.optimizer = Adam(self.model.parameters(), lr=learning_rate)
         self.es = EarlyStopping(patience=75) if early_stopping else None
 
         #* Losses 
-        self.ce = edgeLoss(self.device).cuda()
-        self.ce_weight = 50
+        self.ce = nn.MSELoss()
+        self.ce_weight = 5*10e-6
         self.mse = dsntnn.euclidean_losses
         self.mse_weight = 75
         self.kl = kl_reg
         self.kl_weight = 1
         self.bce = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([2])).to(device) if classifier else None
-        self.bce_weight = 5
+        self.bce_weight = 10
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', verbose=True, patience=30)
 
         self.writer = cw2.customWriter(
-            log_dir=f'./runs/{dir_name}', batch_size=batch_size, num_classes=n_outputs)
+            log_dir=f'./runs/{dir_name}', batch_size=batch_size, dataset=dataset)
         self.num_epochs = num_epochs
         
         self.best_loss = 10000 # Initialise loss for saving best model
@@ -148,24 +157,27 @@ class Labeller():
             img = data['image'].to(self.device, dtype=torch.float32)
             mask = data['mask'].to(self.device, dtype=torch.long)
             heatmap = data['heatmap'].to(self.device, dtype=torch.float32)
+            dist_transform = data['edt'].to(self.device, dtype=torch.float32)
             keypoints, labels = data['keypoints'].to(self.device, dtype=torch.float32), \
                 data['labels'].to(self.device, dtype=torch.float32)
             self.optimizer.zero_grad() #* Reset gradients
 
             #* Sharpen heatmap
             heatmap = self.writer.sharpen_heatmap(heatmap)
+            
             if self.classifier:
-                pred_seg, pred_heatmap, pred_coords, pred_labels = self.model(img)
+                pred_seg, pred_heatmap, pred_coords, pred_labels, edt_pred = self.model(img)
                 bce = self.bce(pred_labels, labels)
             else:
-                pred_seg, pred_heatmap, pred_coords = self.model(img)
-
+                pred_seg, pred_heatmap, pred_coords, edt_pred = self.model(img)
             #* Losses
-            ce = self.ce(pred_coords, keypoints, labels)
-            kl = self.kl(pred_heatmap, heatmap[: , 1: ])
+            #ce = self.ce(pred_coords, keypoints, labels)
+            ce = self.ce(edt_pred, dist_transform)
+            kl = self.kl(pred_heatmap, heatmap)
             kl = dsntnn.average_loss(kl, mask=labels)
             mse = self.mse(pred_coords, keypoints)
             mse = dsntnn.average_loss(mse, mask=labels)
+            #print(edt_loss, kl, mse)
             loss = ce*self.ce_weight + kl*self.kl_weight + mse*self.mse_weight
             if self.classifier:
                 loss += bce
@@ -194,20 +206,23 @@ class Labeller():
                 img = data['image'].to(self.device, dtype=torch.float32)
                 mask = data['mask'].to(self.device, dtype=torch.long)
                 heatmap = data['heatmap'].to(self.device, dtype=torch.float32)
+                dist_transform = data['edt'].to(self.device, dtype=torch.float32)
                 keypoints, labels = data['keypoints'].to(
                     self.device, dtype=torch.float32), data['labels'].to(self.device, dtype=torch.float32)
 
                 #* Sharpen heatmap
                 heatmap = self.writer.sharpen_heatmap(heatmap)
+                
                 if self.classifier:
-                    pred_seg, pred_heatmap, pred_coords, pred_labels = self.model(
+                    pred_seg, pred_heatmap, pred_coords, pred_labels, edt_pred = self.model(
                         img, writer=self.writer)
                     bce = self.bce(pred_labels, labels)
                 else:
-                    pred_seg, pred_heatmap, pred_coords = self.model(img)
+                    pred_seg, pred_heatmap, pred_coords, edt_pred = self.model(img)
                 #* Losses
-                ce = self.ce(pred_coords, keypoints, labels)
-                kl = self.kl(pred_heatmap, heatmap[: , 1: ])
+                #ce = self.ce(pred_coords, keypoints, labels)
+                ce = self.ce(edt_pred, dist_transform)
+                kl = self.kl(pred_heatmap, heatmap)
                 kl = dsntnn.average_loss(kl, mask=labels)
                 mse = self.mse(pred_coords, keypoints)
                 mse = dsntnn.average_loss(mse, mask=labels)
@@ -234,8 +249,8 @@ class Labeller():
                                                     apply_norm=False, coords=pred_coords, 
                                                     gt_coords=keypoints, labels=pred_labels)
 
-                        self.writer.plot_prediction(f'Mask Predictions', img=img, prediction=pred_seg,
-                                                    ground_truth=mask, type_='mask', apply_norm=False, 
+                        self.writer.plot_prediction(f'Mask Predictions', img=img, prediction=edt_pred,
+                                                    ground_truth=None, type_='distance_transform', apply_norm=False, 
                                                     )
                         
 
